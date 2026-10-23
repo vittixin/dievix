@@ -208,7 +208,7 @@ begin
   chkActive.Checked := True;
   edtNotes.Text := '';
   UpdateRepeatDisplay;
-  if edtTeeth.CanFocus then
+  if Showing and edtTeeth.CanFocus then
     edtTeeth.SetFocus;
 end;
 
@@ -226,7 +226,8 @@ begin
   if T <= 0 then
   begin
     ShowMessage('Please enter a valid positive number of teeth.');
-    edtTeeth.SetFocus;
+    if Showing and edtTeeth.CanFocus then
+      edtTeeth.SetFocus;
     Exit;
   end;
 
@@ -234,7 +235,8 @@ begin
   if P <= 0 then
   begin
     ShowMessage('Please enter a valid positive pitch in micrometres (default 3175).');
-    edtPitch.SetFocus;
+    if Showing and edtPitch.CanFocus then
+      edtPitch.SetFocus;
     Exit;
   end;
 

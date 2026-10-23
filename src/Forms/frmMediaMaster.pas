@@ -199,7 +199,7 @@ begin
   edtCaliper.Text := '135';
   chkActive.Checked := True;
   edtNotes.Text := '';
-  if edtCode.CanFocus then
+  if Showing and edtCode.CanFocus then
     edtCode.SetFocus;
 end;
 
@@ -215,13 +215,15 @@ begin
   if Trim(edtCode.Text) = '' then
   begin
     ShowMessage('Please enter a Media Code.');
-    edtCode.SetFocus;
+    if Showing and edtCode.CanFocus then
+      edtCode.SetFocus;
     Exit;
   end;
   if Trim(edtName.Text) = '' then
   begin
     ShowMessage('Please enter a Media Name.');
-    edtName.SetFocus;
+    if Showing and edtName.CanFocus then
+      edtName.SetFocus;
     Exit;
   end;
 

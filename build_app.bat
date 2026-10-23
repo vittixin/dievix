@@ -18,5 +18,7 @@ if errorlevel 1 (
 )
 
 copy /y DieVix.ini bin\DieVix.ini >nul
+if not exist "bin\migrations" mkdir "bin\migrations"
+copy /y migrations\*.sql bin\migrations\ >nul
 echo [SUCCESS] DieVix.exe build completed successfully!
 exit /b 0

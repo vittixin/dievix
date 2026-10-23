@@ -98,11 +98,15 @@ type
   TDie = record
     ID: Integer;
     SerialNo: string;
+    Description: string;
+    InternalRef: string;
+    CustomerRef: string;
     CustomerID: Integer;
     CustomerName: string;
     MediaID: Integer;
     MediaName: string;
     Teeth: Integer;
+    PitchUm: Integer;
     AroundSizeMm: Double;
     AcrossSizeMm: Double;
     AroundUps: Integer;
@@ -111,16 +115,126 @@ type
     AcrossGapMm: Double;
     CornerRadiusMm: Double;
     Shape: string;
+    CutType: string;
     StorageLocation: string;
+    StorageRack: string;
+    StorageShelf: string;
+    StorageBin: string;
     StatusCode: string;
     StatusName: string;
+    BadgeColor: string;
     OverrideReason: string;
+    GapPolicyStatus: string;
     PurchaseDate: TDateTime;
+    ReceivedDate: TDateTime;
     DieMaker: string;
+    SupplierRef: string;
     TotalRunMetres: Integer;
     Notes: string;
+    Version: Integer;
+    CreatedBy: string;
     CreatedAt: TDateTime;
+    UpdatedBy: string;
     UpdatedAt: TDateTime;
+    RepeatMm: Double;
+    RepeatInch: Double;
+    class function CreateNew(
+      const ASerialNo: string;
+      ATeeth: Integer;
+      AAroundMm, AAcrossMm: Double;
+      AAroundUps: Integer = 1;
+      AAcrossUps: Integer = 1
+    ): TDie; static;
+  end;
+
+  { Die Audit Entry }
+  TDieAuditEntry = record
+    ID: Integer;
+    DieID: Integer;
+    Action: string;
+    FieldName: string;
+    OldValue: string;
+    NewValue: string;
+    OverrideReason: string;
+    Details: string;
+    ChangedBy: string;
+    ChangedAt: TDateTime;
+    class function CreateEntry(
+      ADieID: Integer;
+      const AAction, ADetails: string;
+      const AChangedBy: string = 'OPERATOR'
+    ): TDieAuditEntry; static;
+  end;
+
+  { Die Search / Filter Criteria }
+  TDieSearchFilter = record
+    SearchText: string;
+    CustomerID: Integer;
+    Teeth: Integer;
+    MediaID: Integer;
+    StatusCode: string;
+    Shape: string;
+    StorageLocation: string;
+    OnlySub3mm: Boolean;
+    ActiveOnly: Boolean;
+    class function Default: TDieSearchFilter; static;
+  end;
+
+  { Similar Die Match Classification }
+  TSimilarDieMatchType = (smtExact, smtReusableAlternative, smtIncompatible);
+
+  { Similar Die Search Match Result }
+  TSimilarDieResult = record
+    Die: TDie;
+    MatchType: TSimilarDieMatchType;
+    AroundDiffMm: Double;
+    AcrossDiffMm: Double;
+    MatchDescription: string;
+  end;
+
+  { Smart Die Size Search Match Classification }
+  TSmartDieMatchClass = (
+    sdmExactMatch,            // Group 1: Exact dimensions (0 um difference)
+    sdmNearMatchTier1,        // Group 2: Around diff <= 1.000 mm AND Across diff <= 1.000 mm
+    sdmNearMatchTier2,        // Group 3: Around diff <= Tol mm AND Across diff <= Tol mm
+    sdmSlittingCandidate,     // Group 4: Around diff <= Tol mm, Across requires slitting review
+    sdmExcluded               // Out of tolerance
+  );
+
+  { Smart Die Size Finder Search Criteria }
+  TSmartDieSizeFilter = record
+    TargetAroundMm: Double;
+    TargetAcrossMm: Double;
+    ToleranceMm: Double;
+    IncludeSlitting: Boolean;
+    Teeth: Integer;
+    MachineID: Integer;
+    StatusCode: string;
+    ActiveOnly: Boolean;
+    Shape: string;
+    CornerRadiusMm: Double;
+    CornerRadiusTolMm: Double;
+    CutType: string;
+    Page: Integer;
+    PageSize: Integer;
+    class function CreateDefault(
+      const AAroundMm, AAcrossMm: Double;
+      const AToleranceMm: Double = 2.0
+    ): TSmartDieSizeFilter; static;
+  end;
+
+  { Smart Die Size Finder Search Result }
+  TSmartDieSearchResult = record
+    Die: TDie;
+    AroundDiffUm: Int64;
+    AcrossDiffUm: Int64;
+    AbsAroundDiffUm: Int64;
+    AbsAcrossDiffUm: Int64;
+    AroundDiffMm: Double;
+    AcrossDiffMm: Double;
+    MatchClass: TSmartDieMatchClass;
+    MatchClassName: string;
+    ReusabilityNote: string;
   end;
 
   { Repository Interfaces }
@@ -192,6 +306,34 @@ type
     function SetValue(const AKey, AValue: string; const ADescription: string = ''): Boolean;
   end;
 
+  IDieRepository = interface
+    ['{B1001008-A101-4A01-8A01-000000000008}']
+    function GetAll: TList<TDie>;
+    function GetByID(const AID: Integer): TDie;
+    function GetBySerial(const ASerialNo: string): TDie;
+    function Search(const AFilter: TDieSearchFilter): TList<TDie>;
+    function Insert(var ADie: TDie): Integer;
+    function Update(const ADie: TDie): Boolean;
+    function Delete(const AID: Integer): Boolean;
+    function SerialExists(const ASerialNo: string; const AExcludeID: Integer = 0): Boolean;
+    function ChangeStatus(const AID: Integer; const ANewStatusCode, AReason, AUser: string): Boolean;
+    function UpdateLocation(const AID: Integer; const ARack, AShelf, ABin, ANotes, AUser: string): Boolean;
+    function FindSimilarDies(
+      const ATeeth: Integer;
+      const AAroundSizeMm, AAcrossSizeMm: Double;
+      const AAroundUps, AAcrossUps: Integer;
+      const AShape: string;
+      const AToleranceMm: Double = 0.5;
+      const AExcludeID: Integer = 0
+    ): TList<TSimilarDieResult>;
+    function SmartSearchDies(
+      const AFilter: TSmartDieSizeFilter;
+      out ATotalCount: Integer
+    ): TList<TSmartDieSearchResult>;
+    function GetAuditLog(const ADieID: Integer): TList<TDieAuditEntry>;
+    function AddAuditEntry(const AEntry: TDieAuditEntry): Boolean;
+  end;
+
 implementation
 
 { TCustomer }
@@ -250,6 +392,102 @@ begin
   Result.MinWebWidthMm := 50.0;
   Result.DefaultMarginMm := 5.0;
   Result.IsActive := True;
+end;
+
+{ TDie }
+
+class function TDie.CreateNew(
+  const ASerialNo: string;
+  ATeeth: Integer;
+  AAroundMm, AAcrossMm: Double;
+  AAroundUps, AAcrossUps: Integer
+): TDie;
+begin
+  FillChar(Result, SizeOf(Result), 0);
+  Result.SerialNo := ASerialNo;
+  Result.Teeth := ATeeth;
+  Result.PitchUm := 3175;
+  Result.AroundSizeMm := AAroundMm;
+  Result.AcrossSizeMm := AAcrossMm;
+  Result.AroundUps := AAroundUps;
+  Result.AcrossUps := AAcrossUps;
+  Result.AcrossGapMm := 3.000;
+  Result.CornerRadiusMm := 2.000;
+  Result.Shape := 'RECTANGLE';
+  Result.CutType := 'ROTARY';
+  Result.StatusCode := 'ACTIVE';
+  Result.StatusName := 'Active';
+  Result.BadgeColor := 'Green';
+  Result.Version := 1;
+  Result.CreatedBy := 'OPERATOR';
+  Result.UpdatedBy := 'OPERATOR';
+  Result.CreatedAt := Now;
+  Result.UpdatedAt := Now;
+  Result.RepeatMm := (ATeeth * 3175) / 1000.0;
+  Result.RepeatInch := ATeeth / 8.0;
+  if AAroundUps > 0 then
+    Result.AroundGapMm := (Result.RepeatMm - (AAroundUps * AAroundMm)) / AAroundUps
+  else
+    Result.AroundGapMm := 0.0;
+end;
+
+{ TDieAuditEntry }
+
+class function TDieAuditEntry.CreateEntry(
+  ADieID: Integer;
+  const AAction, ADetails: string;
+  const AChangedBy: string
+): TDieAuditEntry;
+begin
+  FillChar(Result, SizeOf(Result), 0);
+  Result.DieID := ADieID;
+  Result.Action := AAction;
+  Result.Details := ADetails;
+  Result.ChangedBy := AChangedBy;
+  Result.ChangedAt := Now;
+end;
+
+{ TDieSearchFilter }
+
+class function TDieSearchFilter.Default: TDieSearchFilter;
+begin
+  FillChar(Result, SizeOf(Result), 0);
+  Result.SearchText := '';
+  Result.CustomerID := 0;
+  Result.Teeth := 0;
+  Result.MediaID := 0;
+  Result.StatusCode := '';
+  Result.Shape := '';
+  Result.StorageLocation := '';
+  Result.OnlySub3mm := False;
+  Result.ActiveOnly := False;
+end;
+
+{ TSmartDieSizeFilter }
+
+class function TSmartDieSizeFilter.CreateDefault(
+  const AAroundMm, AAcrossMm: Double;
+  const AToleranceMm: Double
+): TSmartDieSizeFilter;
+begin
+  FillChar(Result, SizeOf(Result), 0);
+  Result.TargetAroundMm := AAroundMm;
+  Result.TargetAcrossMm := AAcrossMm;
+  if AToleranceMm > 0 then
+    Result.ToleranceMm := AToleranceMm
+  else
+    Result.ToleranceMm := 2.000;
+  Result.IncludeSlitting := False;
+  Result.Teeth := 0;
+  Result.MachineID := 0;
+  Result.StatusCode := '';
+  Result.ActiveOnly := True;
+  Result.Shape := '';
+  Result.CornerRadiusMm := -1.0;
+  Result.CornerRadiusTolMm := 0.5;
+  Result.CutType := '';
+  Result.Page := 1;
+  Result.PageSize := 100;
 end;
 
 end.

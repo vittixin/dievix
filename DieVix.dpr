@@ -1,4 +1,4 @@
-program DieVix;
+﻿program DieVix;
 
 {==============================================================================
   DieVix – Rotary Die & Keyline Manager
@@ -7,11 +7,13 @@ program DieVix;
 
 uses
   Vcl.Forms,
+  FireDAC.VCLUI.Wait,
   DieVix.CalculationEngine in 'src\Engine\DieVix.CalculationEngine.pas',
   DieVix.Domain in 'src\Domain\DieVix.Domain.pas',
   DieVix.ConnectionManager in 'src\Database\DieVix.ConnectionManager.pas',
   DieVix.Repositories in 'src\Repositories\DieVix.Repositories.pas',
   DieVix.MasterDataService in 'src\Services\DieVix.MasterDataService.pas',
+  DieVix.DieService in 'src\Services\DieVix.DieService.pas',
   frmMain in 'src\Forms\frmMain.pas' {frmMain},
   frmCylinderMaster in 'src\Forms\frmCylinderMaster.pas' {frmCylinderMaster},
   frmMachineMaster in 'src\Forms\frmMachineMaster.pas' {frmMachineMaster},
@@ -19,7 +21,9 @@ uses
   frmCustomerMaster in 'src\Forms\frmCustomerMaster.pas' {frmCustomerMaster},
   frmMediaMaster in 'src\Forms\frmMediaMaster.pas' {frmMediaMaster},
   frmDieStatusMaster in 'src\Forms\frmDieStatusMaster.pas' {frmDieStatusMaster},
-  frmSettings in 'src\Forms\frmSettings.pas' {frmSettings};
+  frmSettings in 'src\Forms\frmSettings.pas' {frmSettings},
+  frmDieEditor in 'src\Forms\frmDieEditor.pas' {frmDieEditor},
+  frmDieRegister in 'src\Forms\frmDieRegister.pas' {frmDieRegister};
 
 begin
   Application.Initialize;

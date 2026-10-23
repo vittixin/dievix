@@ -27,7 +27,8 @@ DieVix/
 │   └── DIEVIX_DESIGN_SPECIFICATION.md   # Complete architecture & design blueprint
 ├── migrations/
 │   ├── V001__initial_schema.sql         # Core Firebird 5.0 schema & DDL
-│   └── V002__seed_fleet_and_masters.sql # Seed data for 16 cylinders, settings, presses
+│   ├── V002__seed_fleet_and_masters.sql # Seed data for 16 cylinders, settings, presses
+│   └── V003__die_inventory_extension.sql# Phase 3 Die inventory, physical storage, and audit trail
 ├── src/
 │   ├── Engine/
 │   │   └── DieVix.CalculationEngine.pas # Pure Pascal integer micrometre engine (Zero UI/DB dependency)
@@ -39,9 +40,12 @@ DieVix/
 │   ├── Repositories/
 │   │   └── DieVix.Repositories.pas      # FireDAC repository implementations with parameterized SQL
 │   ├── Services/
-│   │   └── DieVix.MasterDataService.pas # Master Data application service & business integrity guards
+│   │   ├── DieVix.MasterDataService.pas # Master Data application service & business integrity guards
+│   │   └── DieVix.DieService.pas        # Die tooling service, live calculations, duplicate & reuse detection
 │   └── Forms/                           # VCL Forms & DFM resources
 │       ├── frmMain.pas / .dfm           # Modern desktop shell & KPI dashboard
+│       ├── frmDieRegister.pas / .dfm    # Searchable & filterable Die Master Register
+│       ├── frmDieEditor.pas / .dfm      # Die tooling editor with live calculations & similar reuse scanner
 │       ├── frmCylinderMaster.pas / .dfm # Cylinder fleet register
 │       ├── frmMachineMaster.pas / .dfm  # Press specifications
 │       ├── frmMachineCylinderMatrix.pas # 2D machine-cylinder compatibility grid
@@ -54,6 +58,7 @@ DieVix/
 │   ├── DieVixTests.dproj                # Delphi 12 project file
 │   ├── DieVixCalculationTests.pas       # Engine tests (boundary, noise, fit, recommendation)
 │   ├── DieVixDatabaseTests.pas          # Database integration tests (CRUD, transactions, matrix)
+│   ├── DieVixDieTests.pas               # Phase 3 Die tests (CRUD, duplicate serial, sub-3mm override, concurrency)
 │   └── build_and_run_tests.bat          # Command-line compilation & execution
 ├── DieVix.dpr                           # Desktop Application project file
 ├── DieVix.dproj                         # Delphi 12 project file
@@ -109,4 +114,4 @@ Produces `bin\DieVix.exe`.
 cd tests
 build_and_run_tests.bat
 ```
-Compiles and executes all 25 DUnitX test fixtures covering calculation math and database repositories.
+Compiles and executes all 50 DUnitX test fixtures covering calculation math, database repositories, die tooling lifecycle, duplicate detection, optimistic locking, and gap validation.

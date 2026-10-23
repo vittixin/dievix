@@ -35,6 +35,7 @@ uses
   FireDAC.Phys.FBDef,
   FireDAC.Phys.IBBase,
   FireDAC.UI.Intf,
+  FireDAC.Stan.Factory,
   Data.DB;
 
 type
@@ -61,8 +62,10 @@ type
     FConfig: TDatabaseConfig;
     FConnection: TFDConnection;
     FDriverLink: TFDPhysFBDriverLink;
+    FWaitCursor: TFDGUIxWaitCursor;
     FIniPath: string;
     procedure SetupDriverLink;
+    procedure SetupWaitCursor;
     procedure ConfigureConnection(AConn: TFDConnection; const ACfg: TDatabaseConfig);
   public
     constructor Create;
@@ -70,6 +73,7 @@ type
 
     class function Instance: TDieVixConnectionManager;
     class procedure ReleaseInstance;
+    class function IsWaitCursorRegistered: Boolean;
 
     procedure LoadFromIni(const APath: string = '');
     procedure SaveToIni(const APath: string = '');
@@ -83,6 +87,7 @@ type
 
     property Config: TDatabaseConfig read FConfig write FConfig;
     property IniPath: string read FIniPath write FIniPath;
+    property WaitCursor: TFDGUIxWaitCursor read FWaitCursor;
   end;
 
 implementation
@@ -122,12 +127,21 @@ begin
   inherited Create;
   FConfig := TDatabaseConfig.DefaultServer;
   FIniPath := TPath.Combine(ExtractFilePath(ParamStr(0)), 'DieVix.ini');
+  if not FileExists(FIniPath) and FileExists(TPath.Combine(ExtractFilePath(ParamStr(0)), '..\DieVix.ini')) then
+    FIniPath := TPath.GetFullPath(TPath.Combine(ExtractFilePath(ParamStr(0)), '..\DieVix.ini'))
+  else if not FileExists(FIniPath) and FileExists('DieVix.ini') then
+    FIniPath := TPath.GetFullPath('DieVix.ini');
+
+  SetupWaitCursor;
 
   FDriverLink := TFDPhysFBDriverLink.Create(nil);
   SetupDriverLink;
 
   FConnection := TFDConnection.Create(nil);
-  ConfigureConnection(FConnection, FConfig);
+  if FileExists(FIniPath) then
+    LoadFromIni(FIniPath)
+  else
+    ConfigureConnection(FConnection, FConfig);
 end;
 
 destructor TDieVixConnectionManager.Destroy;
@@ -140,6 +154,7 @@ begin
   end;
 
   FreeAndNil(FDriverLink);
+  FreeAndNil(FWaitCursor);
   inherited Destroy;
 end;
 
@@ -153,6 +168,27 @@ end;
 class procedure TDieVixConnectionManager.ReleaseInstance;
 begin
   FreeAndNil(FInstance);
+end;
+
+class function TDieVixConnectionManager.IsWaitCursorRegistered: Boolean;
+var
+  Intf: IFDGUIxWaitCursor;
+begin
+  try
+    FDCreateInterface(IFDGUIxWaitCursor, Intf, False);
+    Result := Assigned(Intf);
+  except
+    Result := False;
+  end;
+end;
+
+procedure TDieVixConnectionManager.SetupWaitCursor;
+begin
+  if not Assigned(FWaitCursor) then
+  begin
+    FWaitCursor := TFDGUIxWaitCursor.Create(nil);
+    FWaitCursor.ScreenCursor := gcrSQLWait;
+  end;
 end;
 
 procedure TDieVixConnectionManager.SetupDriverLink;
@@ -217,6 +253,13 @@ begin
     FConfig.Server := Ini.ReadString('Database', 'Server', 'localhost');
     FConfig.Port := Ini.ReadInteger('Database', 'Port', 3050);
     FConfig.Database := Ini.ReadString('Database', 'Database', 'DIEVIX.FDB');
+    if (ExtractFileDrive(FConfig.Database) = '') and not FConfig.Database.StartsWith('/') then
+    begin
+      if FileExists(TPath.Combine(ExtractFilePath(TargetFile), FConfig.Database)) then
+        FConfig.Database := TPath.GetFullPath(TPath.Combine(ExtractFilePath(TargetFile), FConfig.Database))
+      else if FileExists(TPath.Combine(ExtractFilePath(ParamStr(0)), FConfig.Database)) then
+        FConfig.Database := TPath.GetFullPath(TPath.Combine(ExtractFilePath(ParamStr(0)), FConfig.Database));
+    end;
     FConfig.UserName := Ini.ReadString('Database', 'UserName', 'SYSDBA');
     FConfig.Password := Ini.ReadString('Database', 'Password', 'masterkey');
     FConfig.VendorLib := Ini.ReadString('Database', 'VendorLib', 'C:\Program Files (x86)\Firebird\Firebird_5_0\fbclient.dll');

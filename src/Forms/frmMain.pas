@@ -9,11 +9,13 @@ interface
 
 uses
   Winapi.Windows, Winapi.Messages, System.SysUtils, System.Variants, System.Classes,
+  System.IOUtils,
   Vcl.Graphics, Vcl.Controls, Vcl.Forms, Vcl.Dialogs, Vcl.StdCtrls, Vcl.ExtCtrls,
   Vcl.ComCtrls, System.Generics.Collections, System.UITypes,
   DieVix.Domain, DieVix.ConnectionManager, DieVix.MasterDataService,
   frmCylinderMaster, frmMachineMaster, frmMachineCylinderMatrix,
-  frmCustomerMaster, frmMediaMaster, frmDieStatusMaster, frmSettings;
+  frmCustomerMaster, frmMediaMaster, frmDieStatusMaster, frmSettings,
+  DieVix.DieService, frmDieRegister;
 
 type
   TfrmMain = class(TForm)
@@ -21,6 +23,7 @@ type
     lblAppTitle: TLabel;
     lblTagline: TLabel;
     pnlSidebar: TPanel;
+    btnDieRegister: TButton;
     btnCylinders: TButton;
     btnMachines: TButton;
     btnMatrix: TButton;
@@ -30,6 +33,9 @@ type
     btnSettings: TButton;
     pnlContent: TPanel;
     pnlDashboardCards: TPanel;
+    cardDies: TPanel;
+    lblCountDies: TLabel;
+    lblTitleDies: TLabel;
     cardCylinders: TPanel;
     lblCountCylinders: TLabel;
     lblTitleCylinders: TLabel;
@@ -44,6 +50,7 @@ type
     lblTitleMedia: TLabel;
     pnlQuickActions: TPanel;
     lblQuickActions: TLabel;
+    btnQuickDieRegister: TButton;
     btnQuickMatrix: TButton;
     btnQuickCylinder: TButton;
     btnQuickCustomer: TButton;
@@ -51,6 +58,7 @@ type
     statBar: TStatusBar;
     procedure FormCreate(Sender: TObject);
     procedure FormDestroy(Sender: TObject);
+    procedure btnDieRegisterClick(Sender: TObject);
     procedure btnCylindersClick(Sender: TObject);
     procedure btnMachinesClick(Sender: TObject);
     procedure btnMatrixClick(Sender: TObject);
@@ -60,6 +68,7 @@ type
     procedure btnSettingsClick(Sender: TObject);
   private
     FService: TMasterDataService;
+    FDieService: TDieService;
     procedure RefreshDashboard;
     procedure UpdateStatusBar;
   public
@@ -73,14 +82,33 @@ implementation
 {$R *.dfm}
 
 procedure TfrmMain.FormCreate(Sender: TObject);
+var
+  MigDir: string;
+  AppCount: Integer;
+  LogStr: string;
 begin
+  if not TDieVixConnectionManager.IsWaitCursorRegistered then
+    raise Exception.Create('FireDAC UI wait cursor factory is not registered.');
+
+  // Auto-apply migrations if migrations directory is discovered
+  MigDir := TPath.Combine(ExtractFilePath(ParamStr(0)), 'migrations');
+  if not DirectoryExists(MigDir) then
+    MigDir := TPath.Combine(ExtractFilePath(ParamStr(0)), '..\migrations');
+  if not DirectoryExists(MigDir) and DirectoryExists('migrations') then
+    MigDir := TPath.GetFullPath('migrations');
+
+  if DirectoryExists(MigDir) then
+    TDieVixConnectionManager.Instance.ApplyMigrations(MigDir, AppCount, LogStr);
+
   FService := TMasterDataService.Create;
+  FDieService := TDieService.Create;
   UpdateStatusBar;
   RefreshDashboard;
 end;
 
 procedure TfrmMain.FormDestroy(Sender: TObject);
 begin
+  FDieService.Free;
   FService.Free;
 end;
 
@@ -103,12 +131,20 @@ end;
 
 procedure TfrmMain.RefreshDashboard;
 var
+  Dies: TList<TDie>;
   Cyls: TList<TCylinder>;
   Machs: TList<TMachine>;
   Custs: TList<TCustomer>;
   Media: TList<TMedia>;
 begin
   try
+    Dies := FDieService.GetAllDies;
+    try
+      lblCountDies.Caption := IntToStr(Dies.Count);
+    finally
+      Dies.Free;
+    end;
+
     Cyls := FService.GetAllCylinders(True);
     try
       lblCountCylinders.Caption := IntToStr(Cyls.Count);
@@ -142,6 +178,20 @@ begin
       statBar.Panels[3].Text := 'Dashboard refresh error: ' + E.Message;
     end;
   end;
+end;
+
+procedure TfrmMain.btnDieRegisterClick(Sender: TObject);
+var
+  Form: TfrmDieRegister;
+begin
+  Form := TfrmDieRegister.Create(Self);
+  try
+    Form.DieService := FDieService;
+    Form.ShowModal;
+  finally
+    Form.Free;
+  end;
+  RefreshDashboard;
 end;
 
 procedure TfrmMain.btnCylindersClick(Sender: TObject);

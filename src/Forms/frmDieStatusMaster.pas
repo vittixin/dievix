@@ -151,7 +151,7 @@ begin
   chkUsable.Checked := True;
   cmbBadgeColor.ItemIndex := 0;
   edtSortOrder.Text := '10';
-  if edtCode.CanFocus then
+  if Showing and edtCode.CanFocus then
     edtCode.SetFocus;
 end;
 
@@ -167,7 +167,8 @@ begin
   if Trim(edtCode.Text) = '' then
   begin
     ShowMessage('Please enter a Status Code.');
-    edtCode.SetFocus;
+    if Showing and edtCode.CanFocus then
+      edtCode.SetFocus;
     Exit;
   end;
 

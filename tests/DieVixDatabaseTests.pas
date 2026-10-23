@@ -14,6 +14,9 @@ uses
   System.Generics.Collections,
   DUnitX.TestFramework,
   FireDAC.Comp.Client,
+  FireDAC.Comp.UI,
+  FireDAC.UI.Intf,
+  FireDAC.Stan.Factory,
   DieVix.Domain,
   DieVix.ConnectionManager,
   DieVix.Repositories,
@@ -40,6 +43,12 @@ type
 
     [Test]
     procedure TestFireDACConnection;
+
+    [Test]
+    procedure TestFireDACWaitCursorRegistration;
+
+    [Test]
+    procedure TestCustomerTableExistsAndReadable;
 
     [Test]
     procedure TestCylinderFleetSeededSixteenSizes;
@@ -112,6 +121,30 @@ procedure TDieVixDatabaseTests.TestFireDACConnection;
 begin
   Assert.IsNotNull(FConn, 'Connection object must be allocated');
   Assert.IsTrue(FConn.Connected, 'FireDAC must be connected to Firebird 5');
+end;
+
+procedure TDieVixDatabaseTests.TestFireDACWaitCursorRegistration;
+var
+  Intf: IFDGUIxWaitCursor;
+begin
+  Assert.IsTrue(TDieVixConnectionManager.IsWaitCursorRegistered,
+    'FireDAC wait cursor interface factory must be registered');
+  Assert.IsNotNull(TDieVixConnectionManager.Instance.WaitCursor,
+    'TDieVixConnectionManager must configure an active TFDGUIxWaitCursor instance');
+  FDCreateInterface(IFDGUIxWaitCursor, Intf, True);
+  Assert.IsNotNull(Intf, 'Wait cursor interface instance must be resolved by factory');
+end;
+
+procedure TDieVixDatabaseTests.TestCustomerTableExistsAndReadable;
+var
+  Custs: TList<TCustomer>;
+begin
+  Custs := FCustomerRepo.GetAll(False);
+  try
+    Assert.IsNotNull(Custs, 'Customer list must be allocated');
+  finally
+    Custs.Free;
+  end;
 end;
 
 procedure TDieVixDatabaseTests.TestCylinderFleetSeededSixteenSizes;

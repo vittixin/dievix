@@ -62,67 +62,82 @@ object frmMain: TfrmMain
     Color = clWhite
     ParentBackground = False
     TabOrder = 1
-    object btnCylinders: TButton
+    object btnDieRegister: TButton
       Left = 12
       Top = 15
       Width = 176
       Height = 36
-      Caption = '  Cylinder Master'
+      Caption = '  ★ Die Tooling Register'
+      Font.Charset = DEFAULT_CHARSET
+      Font.Color = clWindowText
+      Font.Height = -12
+      Font.Name = 'Segoe UI Semibold'
+      Font.Style = []
+      ParentFont = False
       TabOrder = 0
-      OnClick = btnCylindersClick
+      OnClick = btnDieRegisterClick
     end
-    object btnMachines: TButton
+    object btnCylinders: TButton
       Left = 12
       Top = 60
       Width = 176
       Height = 36
-      Caption = '  Machine Master'
+      Caption = '  Cylinder Master'
       TabOrder = 1
-      OnClick = btnMachinesClick
+      OnClick = btnCylindersClick
     end
-    object btnMatrix: TButton
+    object btnMachines: TButton
       Left = 12
       Top = 105
       Width = 176
       Height = 36
-      Caption = '  Machine '#215' Cylinders'
+      Caption = '  Machine Master'
       TabOrder = 2
-      OnClick = btnMatrixClick
+      OnClick = btnMachinesClick
     end
-    object btnCustomers: TButton
+    object btnMatrix: TButton
       Left = 12
       Top = 150
       Width = 176
       Height = 36
-      Caption = '  Customer Master'
+      Caption = '  Machine '#215' Cylinders'
       TabOrder = 3
-      OnClick = btnCustomersClick
+      OnClick = btnMatrixClick
     end
-    object btnMedia: TButton
+    object btnCustomers: TButton
       Left = 12
       Top = 195
       Width = 176
       Height = 36
-      Caption = '  Media Substrates'
+      Caption = '  Customer Master'
       TabOrder = 4
-      OnClick = btnMediaClick
+      OnClick = btnCustomersClick
     end
-    object btnStatuses: TButton
+    object btnMedia: TButton
       Left = 12
       Top = 240
       Width = 176
       Height = 36
-      Caption = '  Die Status Codes'
+      Caption = '  Media Substrates'
       TabOrder = 5
+      OnClick = btnMediaClick
+    end
+    object btnStatuses: TButton
+      Left = 12
+      Top = 285
+      Width = 176
+      Height = 36
+      Caption = '  Die Status Codes'
+      TabOrder = 6
       OnClick = btnStatusesClick
     end
     object btnSettings: TButton
       Left = 12
-      Top = 300
+      Top = 335
       Width = 176
       Height = 36
       Caption = '  Settings & Tolerances'
-      TabOrder = 6
+      TabOrder = 7
       OnClick = btnSettingsClick
     end
   end
@@ -145,15 +160,51 @@ object frmMain: TfrmMain
       BevelOuter = bvNone
       ParentBackground = False
       TabOrder = 0
-      object cardCylinders: TPanel
-        Left = 24
+      object cardDies: TPanel
+        Left = 16
         Top = 20
-        Width = 165
+        Width = 140
         Height = 100
         BevelOuter = bvNone
         Color = clWhite
         ParentBackground = False
         TabOrder = 0
+        object lblCountDies: TLabel
+          Left = 16
+          Top = 12
+          Width = 16
+          Height = 37
+          Caption = '0'
+          Font.Charset = DEFAULT_CHARSET
+          Font.Color = 13382400
+          Font.Height = -27
+          Font.Name = 'Segoe UI'
+          Font.Style = [fsBold]
+          ParentFont = False
+        end
+        object lblTitleDies: TLabel
+          Left = 16
+          Top = 60
+          Width = 100
+          Height = 15
+          Caption = 'Die Tooling Fleet'
+          Font.Charset = DEFAULT_CHARSET
+          Font.Color = clGrayText
+          Font.Height = -12
+          Font.Name = 'Segoe UI'
+          Font.Style = []
+          ParentFont = False
+        end
+      end
+      object cardCylinders: TPanel
+        Left = 170
+        Top = 20
+        Width = 140
+        Height = 100
+        BevelOuter = bvNone
+        Color = clWhite
+        ParentBackground = False
+        TabOrder = 1
         object lblCountCylinders: TLabel
           Left = 16
           Top = 12
@@ -182,14 +233,14 @@ object frmMain: TfrmMain
         end
       end
       object cardMachines: TPanel
-        Left = 210
+        Left = 325
         Top = 20
-        Width = 165
+        Width = 140
         Height = 100
         BevelOuter = bvNone
         Color = clWhite
         ParentBackground = False
-        TabOrder = 1
+        TabOrder = 2
         object lblCountMachines: TLabel
           Left = 16
           Top = 12
@@ -218,14 +269,14 @@ object frmMain: TfrmMain
         end
       end
       object cardCustomers: TPanel
-        Left = 395
+        Left = 480
         Top = 20
-        Width = 165
+        Width = 140
         Height = 100
         BevelOuter = bvNone
         Color = clWhite
         ParentBackground = False
-        TabOrder = 2
+        TabOrder = 3
         object lblCountCustomers: TLabel
           Left = 16
           Top = 12
@@ -254,14 +305,14 @@ object frmMain: TfrmMain
         end
       end
       object cardMedia: TPanel
-        Left = 580
+        Left = 635
         Top = 20
-        Width = 165
+        Width = 140
         Height = 100
         BevelOuter = bvNone
         Color = clWhite
         ParentBackground = False
-        TabOrder = 3
+        TabOrder = 4
         object lblCountMedia: TLabel
           Left = 16
           Top = 12
@@ -293,7 +344,7 @@ object frmMain: TfrmMain
     object pnlQuickActions: TPanel
       Left = 24
       Top = 160
-      Width = 721
+      Width = 750
       Height = 220
       BevelOuter = bvNone
       Color = clWhite
@@ -312,40 +363,55 @@ object frmMain: TfrmMain
         Font.Style = [fsBold]
         ParentFont = False
       end
-      object btnQuickMatrix: TButton
+      object btnQuickDieRegister: TButton
         Left = 20
-        Top = 60
-        Width = 200
+        Top = 55
+        Width = 220
+        Height = 45
+        Caption = '★ Open Die Tooling Register'
+        Font.Charset = DEFAULT_CHARSET
+        Font.Color = clWindowText
+        Font.Height = -12
+        Font.Name = 'Segoe UI Semibold'
+        Font.Style = []
+        ParentFont = False
+        TabOrder = 0
+        OnClick = btnDieRegisterClick
+      end
+      object btnQuickMatrix: TButton
+        Left = 260
+        Top = 55
+        Width = 220
         Height = 45
         Caption = 'Configure Press '#215' Cylinders'
-        TabOrder = 0
+        TabOrder = 1
         OnClick = btnMatrixClick
       end
       object btnQuickCylinder: TButton
-        Left = 240
-        Top = 60
-        Width = 200
+        Left = 500
+        Top = 55
+        Width = 220
         Height = 45
         Caption = 'Manage Fleet Cylinders'
-        TabOrder = 1
+        TabOrder = 2
         OnClick = btnCylindersClick
       end
       object btnQuickCustomer: TButton
-        Left = 460
-        Top = 60
-        Width = 200
+        Left = 20
+        Top = 115
+        Width = 220
         Height = 45
         Caption = 'Register New Customer'
-        TabOrder = 2
+        TabOrder = 3
         OnClick = btnCustomersClick
       end
       object btnQuickSettings: TButton
-        Left = 20
-        Top = 125
-        Width = 200
+        Left = 260
+        Top = 115
+        Width = 220
         Height = 45
         Caption = 'Set Around Gap Policy'
-        TabOrder = 3
+        TabOrder = 4
         OnClick = btnSettingsClick
       end
     end
