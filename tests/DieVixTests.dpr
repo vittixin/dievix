@@ -19,9 +19,11 @@ uses
   DieVix.Repositories in '..\src\Repositories\DieVix.Repositories.pas',
   DieVix.MasterDataService in '..\src\Services\DieVix.MasterDataService.pas',
   DieVix.DieService in '..\src\Services\DieVix.DieService.pas',
+  DieVix.KeylineService in '..\src\Services\DieVix.KeylineService.pas',
   DieVixCalculationTests in 'DieVixCalculationTests.pas',
   DieVixDatabaseTests in 'DieVixDatabaseTests.pas',
-  DieVixDieTests in 'DieVixDieTests.pas';
+  DieVixDieTests in 'DieVixDieTests.pas',
+  DieVixCalculatorTests in 'DieVixCalculatorTests.pas';
 
 var
   Runner: ITestRunner;

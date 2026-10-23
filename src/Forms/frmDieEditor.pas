@@ -135,6 +135,7 @@ type
     procedure RefreshAuditGrid;
     procedure InitGrids;
   public
+    procedure PopulateDraft(const ADie: TDie);
     property DieService: TDieService read FDieService write FDieService;
     property DieID: Integer read FDieID write SetDieID;
     property ReadOnlyMode: Boolean read FReadOnly write SetReadOnlyMode;
@@ -479,6 +480,80 @@ begin
 
     RefreshAuditGrid;
     FIsDirty := False;
+  finally
+    FLoading := False;
+  end;
+  CalculateLive;
+end;
+
+procedure TfrmDieEditor.PopulateDraft(const ADie: TDie);
+var
+  Idx: Integer;
+begin
+  FLoading := True;
+  try
+    FDieID := 0;
+    FVersion := 1;
+    lblTitle.Caption := 'New Die Tooling (Draft from Keyline Recommendation)';
+    edtSerial.Text := ADie.SerialNo;
+    edtDescription.Text := ADie.Description;
+    edtInternalRef.Text := ADie.InternalRef;
+    edtCustomerRef.Text := ADie.CustomerRef;
+
+    // Customer
+    Idx := FCustomerIDs.IndexOf(ADie.CustomerID);
+    if Idx >= 0 then cmbCustomer.ItemIndex := Idx else cmbCustomer.ItemIndex := 0;
+
+    // Media
+    Idx := FMediaIDs.IndexOf(ADie.MediaID);
+    if Idx >= 0 then cmbMedia.ItemIndex := Idx else cmbMedia.ItemIndex := 0;
+
+    // Status
+    Idx := cmbStatus.Items.IndexOf(ADie.StatusCode);
+    if Idx >= 0 then cmbStatus.ItemIndex := Idx;
+
+    // Teeth
+    Idx := cmbTeeth.Items.IndexOf(IntToStr(ADie.Teeth));
+    if Idx >= 0 then
+      cmbTeeth.ItemIndex := Idx
+    else
+    begin
+      cmbTeeth.Items.Add(IntToStr(ADie.Teeth));
+      cmbTeeth.ItemIndex := cmbTeeth.Items.Count - 1;
+    end;
+
+    edtPitch.Text := IntToStr(ADie.PitchUm);
+    edtAroundSize.Text := FormatFloat('0.000', ADie.AroundSizeMm);
+    edtAcrossSize.Text := FormatFloat('0.000', ADie.AcrossSizeMm);
+    edtAroundUps.Text := IntToStr(ADie.AroundUps);
+    edtAcrossUps.Text := IntToStr(ADie.AcrossUps);
+    edtAcrossGap.Text := FormatFloat('0.000', ADie.AcrossGapMm);
+    edtCornerRadius.Text := FormatFloat('0.000', ADie.CornerRadiusMm);
+
+    Idx := cmbShape.Items.IndexOf(ADie.Shape);
+    if Idx >= 0 then cmbShape.ItemIndex := Idx else cmbShape.ItemIndex := 0;
+
+    Idx := cmbCutType.Items.IndexOf(ADie.CutType);
+    if Idx >= 0 then cmbCutType.ItemIndex := Idx else cmbCutType.ItemIndex := 0;
+
+    edtOverrideReason.Text := ADie.OverrideReason;
+
+    // Storage / Procurement defaults
+    edtStorageRack.Text := ADie.StorageRack;
+    edtStorageShelf.Text := ADie.StorageShelf;
+    edtStorageBin.Text := ADie.StorageBin;
+    edtLocationNotes.Text := ADie.StorageLocation;
+    edtDieMaker.Text := ADie.DieMaker;
+    edtSupplierRef.Text := ADie.SupplierRef;
+    edtTotalRun.Text := '0';
+    edtPurchaseDate.Text := '';
+    edtReceivedDate.Text := '';
+    edtNotes.Text := ADie.Notes;
+
+    lblVersion.Caption := 'Version: 1 (Draft)';
+    lblCreatedBy.Caption := 'Created: (Draft)';
+    lblUpdatedBy.Caption := 'Modified: (Draft)';
+    FIsDirty := True;
   finally
     FLoading := False;
   end;

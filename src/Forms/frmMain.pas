@@ -15,7 +15,7 @@ uses
   DieVix.Domain, DieVix.ConnectionManager, DieVix.MasterDataService,
   frmCylinderMaster, frmMachineMaster, frmMachineCylinderMatrix,
   frmCustomerMaster, frmMediaMaster, frmDieStatusMaster, frmSettings,
-  DieVix.DieService, frmDieRegister;
+  DieVix.DieService, frmDieRegister, frmKeylineCalculator;
 
 type
   TfrmMain = class(TForm)
@@ -24,6 +24,7 @@ type
     lblTagline: TLabel;
     pnlSidebar: TPanel;
     btnDieRegister: TButton;
+    btnKeylineCalc: TButton;
     btnCylinders: TButton;
     btnMachines: TButton;
     btnMatrix: TButton;
@@ -55,10 +56,12 @@ type
     btnQuickCylinder: TButton;
     btnQuickCustomer: TButton;
     btnQuickSettings: TButton;
+    btnQuickKeylineCalc: TButton;
     statBar: TStatusBar;
     procedure FormCreate(Sender: TObject);
     procedure FormDestroy(Sender: TObject);
     procedure btnDieRegisterClick(Sender: TObject);
+    procedure btnKeylineCalcClick(Sender: TObject);
     procedure btnCylindersClick(Sender: TObject);
     procedure btnMachinesClick(Sender: TObject);
     procedure btnMatrixClick(Sender: TObject);
@@ -185,6 +188,20 @@ var
   Form: TfrmDieRegister;
 begin
   Form := TfrmDieRegister.Create(Self);
+  try
+    Form.DieService := FDieService;
+    Form.ShowModal;
+  finally
+    Form.Free;
+  end;
+  RefreshDashboard;
+end;
+
+procedure TfrmMain.btnKeylineCalcClick(Sender: TObject);
+var
+  Form: TfrmKeylineCalculator;
+begin
+  Form := TfrmKeylineCalculator.Create(Self);
   try
     Form.DieService := FDieService;
     Form.ShowModal;

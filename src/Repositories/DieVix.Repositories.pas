@@ -17,7 +17,8 @@ uses
   FireDAC.Stan.Param,
   Data.DB,
   DieVix.Domain,
-  DieVix.ConnectionManager;
+  DieVix.ConnectionManager,
+  DieVix.CalculationEngine;
 
 type
   { Base Repository }
@@ -1169,8 +1170,8 @@ begin
   if Result.PitchUm = 0 then
     Result.PitchUm := 3175;
 
-  Result.RepeatMm := Qry.FieldByName('REPEAT_MM').AsFloat;
-  Result.RepeatInch := Qry.FieldByName('REPEAT_INCH').AsFloat;
+  Result.RepeatMm := TeethToRepeatMm(Result.Teeth, Result.PitchUm);
+  Result.RepeatInch := TeethToRepeatInch(Result.Teeth);
   Result.AroundSizeMm := Qry.FieldByName('AROUND_SIZE_MM').AsFloat;
   Result.AcrossSizeMm := Qry.FieldByName('ACROSS_SIZE_MM').AsFloat;
   Result.AroundUps := Qry.FieldByName('AROUND_UPS').AsInteger;

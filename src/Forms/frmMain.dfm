@@ -67,7 +67,7 @@ object frmMain: TfrmMain
       Top = 15
       Width = 176
       Height = 36
-      Caption = '  ★ Die Tooling Register'
+      Caption = '  '#9733' Die Tooling Register'
       Font.Charset = DEFAULT_CHARSET
       Font.Color = clWindowText
       Font.Height = -12
@@ -77,67 +77,82 @@ object frmMain: TfrmMain
       TabOrder = 0
       OnClick = btnDieRegisterClick
     end
+    object btnKeylineCalc: TButton
+      Left = 12
+      Top = 56
+      Width = 176
+      Height = 36
+      Caption = '  '#9889' Keyline Calculator'
+      Font.Charset = DEFAULT_CHARSET
+      Font.Color = clWindowText
+      Font.Height = -12
+      Font.Name = 'Segoe UI Semibold'
+      Font.Style = []
+      ParentFont = False
+      TabOrder = 1
+      OnClick = btnKeylineCalcClick
+    end
     object btnCylinders: TButton
       Left = 12
-      Top = 60
+      Top = 97
       Width = 176
       Height = 36
       Caption = '  Cylinder Master'
-      TabOrder = 1
+      TabOrder = 2
       OnClick = btnCylindersClick
     end
     object btnMachines: TButton
       Left = 12
-      Top = 105
+      Top = 138
       Width = 176
       Height = 36
       Caption = '  Machine Master'
-      TabOrder = 2
+      TabOrder = 3
       OnClick = btnMachinesClick
     end
     object btnMatrix: TButton
       Left = 12
-      Top = 150
+      Top = 179
       Width = 176
       Height = 36
       Caption = '  Machine '#215' Cylinders'
-      TabOrder = 3
+      TabOrder = 4
       OnClick = btnMatrixClick
     end
     object btnCustomers: TButton
       Left = 12
-      Top = 195
+      Top = 220
       Width = 176
       Height = 36
       Caption = '  Customer Master'
-      TabOrder = 4
+      TabOrder = 5
       OnClick = btnCustomersClick
     end
     object btnMedia: TButton
       Left = 12
-      Top = 240
+      Top = 261
       Width = 176
       Height = 36
       Caption = '  Media Substrates'
-      TabOrder = 5
+      TabOrder = 6
       OnClick = btnMediaClick
     end
     object btnStatuses: TButton
       Left = 12
-      Top = 285
+      Top = 302
       Width = 176
       Height = 36
       Caption = '  Die Status Codes'
-      TabOrder = 6
+      TabOrder = 7
       OnClick = btnStatusesClick
     end
     object btnSettings: TButton
       Left = 12
-      Top = 335
+      Top = 343
       Width = 176
       Height = 36
       Caption = '  Settings & Tolerances'
-      TabOrder = 7
+      TabOrder = 8
       OnClick = btnSettingsClick
     end
   end
@@ -413,6 +428,21 @@ object frmMain: TfrmMain
         Caption = 'Set Around Gap Policy'
         TabOrder = 4
         OnClick = btnSettingsClick
+      end
+      object btnQuickKeylineCalc: TButton
+        Left = 500
+        Top = 115
+        Width = 220
+        Height = 45
+        Caption = #9889' Keyline Calculator & Optimizer'
+        Font.Charset = DEFAULT_CHARSET
+        Font.Color = clWindowText
+        Font.Height = -12
+        Font.Name = 'Segoe UI Semibold'
+        Font.Style = []
+        ParentFont = False
+        TabOrder = 5
+        OnClick = btnKeylineCalcClick
       end
     end
   end

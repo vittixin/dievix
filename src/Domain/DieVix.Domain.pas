@@ -10,7 +10,8 @@ interface
 uses
   System.SysUtils,
   System.Classes,
-  System.Generics.Collections;
+  System.Generics.Collections,
+  DieVix.CalculationEngine;
 
 type
   { Customer Entity }
@@ -237,8 +238,97 @@ type
     ReusabilityNote: string;
   end;
 
+  { Keyline Scanning Mode }
+  TUpsScanMode = (usmAutoScan, usmFixedUps);
+
+  { Keyline Recommendation Category }
+  TKeylineRecommendationCategory = (
+    krcPreferred,           // Optimal / best legal repeat on compatible press (>= MinGap)
+    krcValidAlternative,    // Larger or alternate valid repeat on compatible press (>= MinGap)
+    krcSubStandardWarning,  // Below-minimum gap (< MinGap), requires production override reason
+    krcMachineIncompatible, // Cylinder unsupported on machine or layout exceeds press web width
+    krcMechanicallyRejected // Physically impossible (cut > repeat or gap < hard block)
+  );
+
+  { Machine Fit Status }
+  TMachineFitStatus = (
+    mfsCompatible,          // Cylinder assigned to machine AND web width fits
+    mfsUnsupportedCylinder, // Cylinder not in machine's assigned fleet
+    mfsExceedsWebWidth,     // Tooling + margins exceeds machine's max web width
+    mfsNoMachineSelected,   // No machine specified (generic calculation)
+    mfsNotVerified          // Missing web width configuration
+  );
+
+  { Keyline Calculator Input Parameters }
+  TKeylineInput = record
+    LabelAroundMm: Double;
+    LabelAcrossMm: Double;
+    MachineID: Integer;
+    UpsMode: TUpsScanMode;
+    MaxAroundUps: Integer;
+    FixedAroundUps: Integer;
+    AcrossUps: Integer;
+    MinAroundGapMm: Double;
+    HardBlockGapMm: Double;
+    AcrossGapMm: Double;
+    LeftMarginMm: Double;
+    RightMarginMm: Double;
+    Shape: string;
+    CornerRadiusMm: Double;
+    MediaID: Integer;
+    ActiveCylindersOnly: Boolean;
+    PitchUm: Integer;
+    class function CreateDefault(
+      const AAroundMm, AAcrossMm: Double;
+      const AMachineID: Integer = 0
+    ): TKeylineInput; static;
+  end;
+
+  { Single Keyline Recommendation Result }
+  TKeylineRecommendation = record
+    AroundUps: Integer;
+    AcrossUps: Integer;
+    Teeth: Integer;
+    PitchUm: Integer;
+    RepeatMm: Double;
+    RepeatInch: Double;
+    AroundGapMm: Double;
+    AroundGapUm: Int64;
+    RemainderUm: Integer;
+    CircumferentialGapPercent: Double; // (RemainingUm / RepeatUm) * 100
+    GapStatus: TGapStatus;
+    RequiresOverrideReason: Boolean;
+    MachineStatus: TMachineFitStatus;
+    MachineStatusText: string;
+    Category: TKeylineRecommendationCategory;
+    CategoryText: string;
+    RecommendationReason: string;
+    ToolingWidthMm: Double;
+    TotalWebWidthMm: Double;
+    MachineMaxWebWidthMm: Double;
+    RemainingWebWidthMm: Double;
+    ExistingDieCount: Integer;
+    IsEligible: Boolean;
+    RankingScore: Integer;
+  end;
+
+  { Complete Keyline Calculation Result }
+  TKeylineCalculationResult = record
+    Input: TKeylineInput;
+    Machine: TMachine;
+    Recommendations: TArray<TKeylineRecommendation>;
+    PreferredCount: Integer;
+    AlternativeCount: Integer;
+    WarningCount: Integer;
+    IncompatibleCount: Integer;
+  end;
+
+  function KeylineCategoryToString(const ACat: TKeylineRecommendationCategory): string;
+  function MachineFitStatusToString(const AStatus: TMachineFitStatus): string;
+
   { Repository Interfaces }
 
+type
   ICustomerRepository = interface
     ['{B1001001-A101-4A01-8A01-000000000001}']
     function GetAll(const ActiveOnly: Boolean = False): TList<TCustomer>;
@@ -488,6 +578,59 @@ begin
   Result.CutType := '';
   Result.Page := 1;
   Result.PageSize := 100;
+end;
+
+{ TKeylineInput }
+
+class function TKeylineInput.CreateDefault(
+  const AAroundMm, AAcrossMm: Double;
+  const AMachineID: Integer
+): TKeylineInput;
+begin
+  FillChar(Result, SizeOf(Result), 0);
+  Result.LabelAroundMm := AAroundMm;
+  Result.LabelAcrossMm := AAcrossMm;
+  Result.MachineID := AMachineID;
+  Result.UpsMode := usmAutoScan;
+  Result.MaxAroundUps := 8;
+  Result.FixedAroundUps := 1;
+  Result.AcrossUps := 1;
+  Result.MinAroundGapMm := 3.000;
+  Result.HardBlockGapMm := 0.000;
+  Result.AcrossGapMm := 3.000;
+  Result.LeftMarginMm := 5.000;
+  Result.RightMarginMm := 5.000;
+  Result.Shape := 'RECTANGLE';
+  Result.CornerRadiusMm := 2.000;
+  Result.MediaID := 0;
+  Result.ActiveCylindersOnly := True;
+  Result.PitchUm := 3175;
+end;
+
+function KeylineCategoryToString(const ACat: TKeylineRecommendationCategory): string;
+begin
+  case ACat of
+    krcPreferred:           Result := 'Preferred (Best Legal Repeat)';
+    krcValidAlternative:    Result := 'Valid Alternative';
+    krcSubStandardWarning:  Result := 'Sub-Standard Warning (< 3mm)';
+    krcMachineIncompatible: Result := 'Machine Incompatible';
+    krcMechanicallyRejected:Result := 'Mechanically Rejected';
+  else
+    Result := 'Unknown';
+  end;
+end;
+
+function MachineFitStatusToString(const AStatus: TMachineFitStatus): string;
+begin
+  case AStatus of
+    mfsCompatible:          Result := 'Compatible';
+    mfsUnsupportedCylinder: Result := 'Unsupported Cylinder';
+    mfsExceedsWebWidth:     Result := 'Exceeds Usable Web Width';
+    mfsNoMachineSelected:   Result := 'No Machine Selected';
+    mfsNotVerified:         Result := 'Not Verified';
+  else
+    Result := 'Unknown';
+  end;
 end;
 
 end.
