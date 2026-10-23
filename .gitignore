@@ -1,0 +1,23 @@
+# Delphi compiler outputs and caches
+bin/
+dcu/
+*.dcu
+*.exe
+*.dll
+*.bpl
+*.dcp
+*.identcache
+*.stat
+*.local
+*.tvsconfig
+__history/
+__recovery/
+
+# Firebird database files
+*.fdb
+*.fbk
+*.log
+
+# Logs & temp
+*.tmp
+tmp/
