@@ -31,8 +31,8 @@ const
   MM_PER_INCH: Double = 25.4;
 
   { Default gap policy thresholds in micrometres }
-  DEFAULT_MIN_GAP_UM: Int64 = 3000;   // 3.000 mm (Standard approved threshold)
-  DEFAULT_WARN_GAP_UM: Int64 = 2400;  // 2.400 mm (Shop tolerance override threshold)
+  DEFAULT_MIN_GAP_UM: Int64 = 3000;         // 3.000 mm (Standard recommended threshold)
+  DEFAULT_HARD_BLOCK_GAP_UM: Int64 = 0;     // 0 = Disabled by default (separate policy)
 
   { Standard production cylinder tooth counts (16 sizes in fleet) }
   DEFAULT_CYLINDER_FLEET: array[0..15] of Integer = (
@@ -44,8 +44,8 @@ type
   TGapStatus = (
     gsOptimal,             // Tightest approved legal gap (>= MinGap)
     gsStandardApproved,    // Fully approved (>= MinGap)
-    gsSubStandardWarning,  // Below MinGap, but within shop tolerance (e.g., 2.4 mm to 2.999 mm)
-    gsMechanicallyRejected // Below WarnGap or negative (< 2.4 mm, stripping failure risk)
+    gsSubStandardWarning,  // Below MinGap; allowed with mandatory override reason
+    gsMechanicallyRejected // Below HardBlock threshold (if enabled) or cut exceeds repeat
   );
 
   { Detailed result of an around gap computation }
@@ -54,14 +54,15 @@ type
     AroundUps: Integer;
     LabelAroundUm: Int64;
     CylinderRepeatUm: Int64;
-    TotalGapPoolUm: Int64;      // Available substrate - (ups * label_size)
-    AroundGapUm: Int64;         // Integer gap per label
-    RemainderUm: Integer;       // Remainder from integer division
-    AroundGapMm: Double;        // Floating point presentation (3 decimal places)
+    TotalGapPoolUm: Int64;           // Available substrate - (ups * label_size)
+    AroundGapUm: Int64;              // Integer gap per label
+    RemainderUm: Integer;            // Remainder from integer division
+    AroundGapMm: Double;             // Floating point presentation (3 decimal places)
     CylinderRepeatMm: Double;
     CylinderRepeatInch: Double;
-    WastePercent: Double;       // Total gap pool / repeat * 100
+    WastePercent: Double;            // Total gap pool / repeat * 100
     Status: TGapStatus;
+    RequiresOverrideReason: Boolean; // True when gap is below MinGap but approved to save with reason
     StatusMessage: string;
   end;
 
@@ -76,6 +77,7 @@ type
     WastePercent: Double;
     Status: TGapStatus;
     IsOptimal: Boolean;
+    RequiresOverrideReason: Boolean;
     StatusText: string;
   end;
 
@@ -96,6 +98,9 @@ type
   function MmToUm(const AMm: Double): Int64; inline;
   function UmToMm(const AUm: Int64): Double; inline;
 
+  { Cylinder fleet validation }
+  function IsCylinderInFleet(const ATeeth: Integer; const AFleet: TArray<Integer> = nil): Boolean;
+
   { Cylinder repeat functions }
   function TeethToRepeatUm(const ATeeth: Integer; const APitchUm: Integer = 3175): Int64; inline;
   function TeethToRepeatMm(const ATeeth: Integer; const APitchUm: Integer = 3175): Double; inline;
@@ -107,8 +112,9 @@ type
     const ALabelAroundUm: Int64;
     const AAroundUps: Integer;
     const AMinGapUm: Int64 = 3000;
-    const AWarnGapUm: Int64 = 2400;
-    const APitchUm: Integer = 3175
+    const AHardBlockGapUm: Int64 = 0;
+    const APitchUm: Integer = 3175;
+    const AAllowedFleet: TArray<Integer> = nil
   ): TGapResult;
 
   function CalculateAroundGapFromMm(
@@ -116,8 +122,9 @@ type
     const ALabelAroundMm: Double;
     const AAroundUps: Integer;
     const AMinGapMm: Double = 3.0;
-    const AWarnGapMm: Double = 2.4;
-    const APitchUm: Integer = 3175
+    const AHardBlockGapMm: Double = 0.0;
+    const APitchUm: Integer = 3175;
+    const AAllowedFleet: TArray<Integer> = nil
   ): TGapResult;
 
   { Web fit validation }
@@ -135,7 +142,7 @@ type
     const AMaxUps: Integer;
     const AAvailableTeeth: TArray<Integer>;
     const AMinGapMm: Double = 3.0;
-    const AWarnGapMm: Double = 2.4;
+    const AHardBlockGapMm: Double = 0.0;
     const APitchUm: Integer = 3175
   ): TArray<TRecommendationResult>;
 
@@ -145,7 +152,7 @@ type
     const AUps: Integer;
     const AAvailableTeeth: TArray<Integer>;
     const AMinGapMm: Double = 3.0;
-    const AWarnGapMm: Double = 2.4;
+    const AHardBlockGapMm: Double = 0.0;
     const APitchUm: Integer = 3175
   ): TRecommendationResult;
 
@@ -157,7 +164,6 @@ implementation
 
 function MmToUm(const AMm: Double): Int64;
 begin
-  // Standard rounding to nearest whole micrometre (e.g., 3.0001 -> 3000, 3.0009 -> 3001)
   Result := Round(AMm * 1000.0);
 end;
 
@@ -167,12 +173,34 @@ begin
 end;
 
 { -----------------------------------------------------------------------------
+  Fleet Validation
+----------------------------------------------------------------------------- }
+
+function IsCylinderInFleet(const ATeeth: Integer; const AFleet: TArray<Integer>): Boolean;
+var
+  T: Integer;
+begin
+  if Length(AFleet) > 0 then
+  begin
+    for T in AFleet do
+      if T = ATeeth then
+        Exit(True);
+    Exit(False);
+  end;
+
+  for T in DEFAULT_CYLINDER_FLEET do
+    if T = ATeeth then
+      Exit(True);
+  Result := False;
+end;
+
+{ -----------------------------------------------------------------------------
   Cylinder Repeat
 ----------------------------------------------------------------------------- }
 
 function TeethToRepeatUm(const ATeeth: Integer; const APitchUm: Integer): Int64;
 begin
-  if ATeeth <= 0 then
+  if (ATeeth <= 0) or (APitchUm <= 0) then
     Exit(0);
   Result := Int64(ATeeth) * Int64(APitchUm);
 end;
@@ -198,8 +226,9 @@ function CalculateAroundGap(
   const ALabelAroundUm: Int64;
   const AAroundUps: Integer;
   const AMinGapUm: Int64;
-  const AWarnGapUm: Int64;
-  const APitchUm: Integer
+  const AHardBlockGapUm: Int64;
+  const APitchUm: Integer;
+  const AAllowedFleet: TArray<Integer>
 ): TGapResult;
 var
   TotalCutUm: Int64;
@@ -209,10 +238,21 @@ begin
   Result.AroundUps := AAroundUps;
   Result.LabelAroundUm := ALabelAroundUm;
 
+  // Input validation
   if (ATeeth <= 0) or (AAroundUps <= 0) or (ALabelAroundUm <= 0) then
   begin
     Result.Status := gsMechanicallyRejected;
+    Result.RequiresOverrideReason := False;
     Result.StatusMessage := 'Invalid input parameters (must be > 0)';
+    Exit;
+  end;
+
+  // Fleet check if allowed fleet specified
+  if (Length(AAllowedFleet) > 0) and (not IsCylinderInFleet(ATeeth, AAllowedFleet)) then
+  begin
+    Result.Status := gsMechanicallyRejected;
+    Result.RequiresOverrideReason := False;
+    Result.StatusMessage := 'Cylinder ' + IntToStr(ATeeth) + 'T is not supported in the active fleet';
     Exit;
   end;
 
@@ -230,7 +270,8 @@ begin
     Result.AroundGapMm := Result.AroundGapUm / 1000.0;
     Result.WastePercent := 0.0;
     Result.Status := gsMechanicallyRejected;
-    Result.StatusMessage := 'Cut size exceeds cylinder repeat';
+    Result.RequiresOverrideReason := False;
+    Result.StatusMessage := 'Physically impossible: label cut length exceeds cylinder repeat';
     Exit;
   end;
 
@@ -241,29 +282,35 @@ begin
   // High-precision millimetre output including fractional remainder
   Result.AroundGapMm := Result.TotalGapPoolUm / (Double(AAroundUps) * 1000.0);
 
-  // Waste percentage: (Total gap / Repeat) * 100
+  // Waste percentage: (Total gap pool / Repeat) * 100
   if Result.CylinderRepeatUm > 0 then
     Result.WastePercent := (Double(Result.TotalGapPoolUm) / Double(Result.CylinderRepeatUm)) * 100.0
   else
     Result.WastePercent := 0.0;
 
-  // Rational integer comparison: eliminates floating-point noise
-  // TotalGapPoolUm >= AroundUps * MinGapUm
+  // Policy evaluation:
+  // 1. Meets or exceeds configured minimum gap -> Standard Approved
   if Result.TotalGapPoolUm >= (Int64(AAroundUps) * AMinGapUm) then
   begin
     Result.Status := gsStandardApproved;
+    Result.RequiresOverrideReason := False;
     Result.StatusMessage := 'Approved (>= ' + FormatFloat('0.000', AMinGapUm / 1000.0) + ' mm)';
   end
-  else if Result.TotalGapPoolUm >= (Int64(AAroundUps) * AWarnGapUm) then
-  begin
-    Result.Status := gsSubStandardWarning;
-    Result.StatusMessage := 'Warning: Sub-standard gap (Shop override required)';
-  end
-  else
+  // 2. Below hard-block threshold (if hard block is explicitly configured > 0)
+  else if (AHardBlockGapUm > 0) and (Result.TotalGapPoolUm < (Int64(AAroundUps) * AHardBlockGapUm)) then
   begin
     Result.Status := gsMechanicallyRejected;
-    Result.StatusMessage := 'Rejected: Gap below minimum mechanical threshold (< ' + 
-                            FormatFloat('0.000', AWarnGapUm / 1000.0) + ' mm)';
+    Result.RequiresOverrideReason := False;
+    Result.StatusMessage := 'Rejected: Gap below hard mechanical block threshold (< ' + 
+                            FormatFloat('0.000', AHardBlockGapUm / 1000.0) + ' mm)';
+  end
+  // 3. Below minimum gap, but not hard blocked -> Warning requiring override reason
+  else
+  begin
+    Result.Status := gsSubStandardWarning;
+    Result.RequiresOverrideReason := True;
+    Result.StatusMessage := 'Warning: Sub-standard gap (' + FormatFloat('0.000', Result.AroundGapMm) + 
+                            ' mm < ' + FormatFloat('0.000', AMinGapUm / 1000.0) + ' mm). Override reason required.';
   end;
 end;
 
@@ -272,8 +319,9 @@ function CalculateAroundGapFromMm(
   const ALabelAroundMm: Double;
   const AAroundUps: Integer;
   const AMinGapMm: Double;
-  const AWarnGapMm: Double;
-  const APitchUm: Integer
+  const AHardBlockGapMm: Double;
+  const APitchUm: Integer;
+  const AAllowedFleet: TArray<Integer>
 ): TGapResult;
 begin
   Result := CalculateAroundGap(
@@ -281,8 +329,9 @@ begin
     MmToUm(ALabelAroundMm),
     AAroundUps,
     MmToUm(AMinGapMm),
-    MmToUm(AWarnGapMm),
-    APitchUm
+    MmToUm(AHardBlockGapMm),
+    APitchUm,
+    AAllowedFleet
   );
 end;
 
@@ -340,7 +389,7 @@ function FindOptimalCylinderForUps(
   const AUps: Integer;
   const AAvailableTeeth: TArray<Integer>;
   const AMinGapMm: Double;
-  const AWarnGapMm: Double;
+  const AHardBlockGapMm: Double;
   const APitchUm: Integer
 ): TRecommendationResult;
 var
@@ -365,7 +414,6 @@ begin
       TeethList[I] := DEFAULT_CYLINDER_FLEET[I];
   end;
 
-  // Sort teeth ascending
   TArray.Sort<Integer>(TeethList);
 
   RequiredRepeatUm := Int64(AUps) * (MmToUm(ALabelAroundMm) + MmToUm(AMinGapMm));
@@ -377,7 +425,7 @@ begin
     CandidateRepeatUm := TeethToRepeatUm(Teeth, APitchUm);
     if CandidateRepeatUm >= RequiredRepeatUm then
     begin
-      GapRes := CalculateAroundGapFromMm(Teeth, ALabelAroundMm, AUps, AMinGapMm, AWarnGapMm, APitchUm);
+      GapRes := CalculateAroundGapFromMm(Teeth, ALabelAroundMm, AUps, AMinGapMm, AHardBlockGapMm, APitchUm);
       if GapRes.Status in [gsStandardApproved, gsOptimal] then
       begin
         BestTeeth := Teeth;
@@ -398,6 +446,7 @@ begin
     Result.WastePercent := BestGapRes.WastePercent;
     Result.Status := gsOptimal;
     Result.IsOptimal := True;
+    Result.RequiresOverrideReason := False;
     Result.StatusText := 'Optimal (Tightest Legal Gap)';
   end
   else
@@ -406,7 +455,7 @@ begin
     if Length(TeethList) > 0 then
     begin
       Teeth := TeethList[High(TeethList)];
-      GapRes := CalculateAroundGapFromMm(Teeth, ALabelAroundMm, AUps, AMinGapMm, AWarnGapMm, APitchUm);
+      GapRes := CalculateAroundGapFromMm(Teeth, ALabelAroundMm, AUps, AMinGapMm, AHardBlockGapMm, APitchUm);
       Result.Teeth := Teeth;
       Result.RepeatMm := GapRes.CylinderRepeatMm;
       Result.RepeatInch := GapRes.CylinderRepeatInch;
@@ -415,6 +464,7 @@ begin
       Result.WastePercent := GapRes.WastePercent;
       Result.Status := GapRes.Status;
       Result.IsOptimal := False;
+      Result.RequiresOverrideReason := GapRes.RequiresOverrideReason;
       Result.StatusText := GapRes.StatusMessage;
     end;
   end;
@@ -425,7 +475,7 @@ function RecommendCylinders(
   const AMaxUps: Integer;
   const AAvailableTeeth: TArray<Integer>;
   const AMinGapMm: Double;
-  const AWarnGapMm: Double;
+  const AHardBlockGapMm: Double;
   const APitchUm: Integer
 ): TArray<TRecommendationResult>;
 var
@@ -456,7 +506,7 @@ begin
 
       for Teeth in TeethList do
       begin
-        GapRes := CalculateAroundGapFromMm(Teeth, ALabelAroundMm, Ups, AMinGapMm, AWarnGapMm, APitchUm);
+        GapRes := CalculateAroundGapFromMm(Teeth, ALabelAroundMm, Ups, AMinGapMm, AHardBlockGapMm, APitchUm);
         
         // Exclude completely negative or physically unviable fits
         if GapRes.TotalGapPoolUm < 0 then
@@ -471,6 +521,7 @@ begin
         Rec.AroundGapUm := GapRes.AroundGapUm;
         Rec.WastePercent := GapRes.WastePercent;
         Rec.Status := GapRes.Status;
+        Rec.RequiresOverrideReason := GapRes.RequiresOverrideReason;
         Rec.StatusText := GapRes.StatusMessage;
 
         // First cylinder with legal gap >= MinGap is marked Optimal for this ups

@@ -13,7 +13,12 @@ uses
   DUnitX.TestRunner,
   DUnitX.Loggers.Console,
   DieVix.CalculationEngine in '..\src\Engine\DieVix.CalculationEngine.pas',
-  DieVixCalculationTests in 'DieVixCalculationTests.pas';
+  DieVix.Domain in '..\src\Domain\DieVix.Domain.pas',
+  DieVix.ConnectionManager in '..\src\Database\DieVix.ConnectionManager.pas',
+  DieVix.Repositories in '..\src\Repositories\DieVix.Repositories.pas',
+  DieVix.MasterDataService in '..\src\Services\DieVix.MasterDataService.pas',
+  DieVixCalculationTests in 'DieVixCalculationTests.pas',
+  DieVixDatabaseTests in 'DieVixDatabaseTests.pas';
 
 var
   Runner: ITestRunner;
