@@ -14,6 +14,11 @@ uses
   DieVix.CalculationEngine;
 
 type
+  { Custom Business & Concurrency Exceptions }
+  EDieVixValidationException = class(Exception);
+  EDieVixConcurrencyException = class(Exception);
+  EDieVixDuplicateException = class(Exception);
+
   { Customer Entity }
   TCustomer = record
     ID: Integer;
@@ -178,6 +183,7 @@ type
     StorageLocation: string;
     OnlySub3mm: Boolean;
     ActiveOnly: Boolean;
+    IncludeArchived: Boolean;
     class function Default: TDieSearchFilter; static;
   end;
 
@@ -212,6 +218,7 @@ type
     MachineID: Integer;
     StatusCode: string;
     ActiveOnly: Boolean;
+    IncludeArchived: Boolean;
     Shape: string;
     CornerRadiusMm: Double;
     CornerRadiusTolMm: Double;
@@ -405,6 +412,10 @@ type
     function Insert(var ADie: TDie): Integer;
     function Update(const ADie: TDie): Boolean;
     function Delete(const AID: Integer): Boolean;
+    function Archive(const AID: Integer; const AReason, AUser: string; const AExpectedVersion: Integer = 0): Boolean;
+    function Restore(const AID: Integer; const AReason, AUser: string; const AExpectedVersion: Integer = 0): Boolean;
+    function CanPermanentlyDelete(const AID: Integer; out ARefusalReason: string): Boolean;
+    function PermanentlyDelete(const AID: Integer): Boolean;
     function SerialExists(const ASerialNo: string; const AExcludeID: Integer = 0): Boolean;
     function ChangeStatus(const AID: Integer; const ANewStatusCode, AReason, AUser: string): Boolean;
     function UpdateLocation(const AID: Integer; const ARack, AShelf, ABin, ANotes, AUser: string): Boolean;
@@ -551,6 +562,7 @@ begin
   Result.StorageLocation := '';
   Result.OnlySub3mm := False;
   Result.ActiveOnly := False;
+  Result.IncludeArchived := False;
 end;
 
 { TSmartDieSizeFilter }
@@ -572,6 +584,7 @@ begin
   Result.MachineID := 0;
   Result.StatusCode := '';
   Result.ActiveOnly := True;
+  Result.IncludeArchived := False;
   Result.Shape := '';
   Result.CornerRadiusMm := -1.0;
   Result.CornerRadiusTolMm := 0.5;

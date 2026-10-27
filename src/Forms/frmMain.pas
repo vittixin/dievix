@@ -201,9 +201,8 @@ procedure TfrmMain.btnKeylineCalcClick(Sender: TObject);
 var
   Form: TfrmKeylineCalculator;
 begin
-  Form := TfrmKeylineCalculator.Create(Self);
+  Form := TfrmKeylineCalculator.CreateWithServices(Self, nil, FDieService);
   try
-    Form.DieService := FDieService;
     Form.ShowModal;
   finally
     Form.Free;

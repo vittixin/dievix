@@ -125,9 +125,13 @@ type
     function GetSelectedRecommendation(out ARec: TKeylineRecommendation): Boolean;
     function GetSelectedExistingDieID: Integer;
     procedure RenderLayoutPreview(Canvas: TCanvas; const PaintW, PaintH: Integer);
+    procedure SetKeylineService(const Value: TKeylineService);
+    procedure SetDieService(const Value: TDieService);
   public
-    property KeylineService: TKeylineService read FKeylineService write FKeylineService;
-    property DieService: TDieService read FDieService write FDieService;
+    constructor Create(AOwner: TComponent); override;
+    constructor CreateWithServices(AOwner: TComponent; AKeylineService: TKeylineService; ADieService: TDieService);
+    property KeylineService: TKeylineService read FKeylineService write SetKeylineService;
+    property DieService: TDieService read FDieService write SetDieService;
   end;
 
 var
@@ -138,6 +142,52 @@ implementation
 {$R *.dfm}
 
 { TfrmKeylineCalculator }
+
+constructor TfrmKeylineCalculator.Create(AOwner: TComponent);
+begin
+  inherited Create(AOwner);
+end;
+
+constructor TfrmKeylineCalculator.CreateWithServices(AOwner: TComponent; AKeylineService: TKeylineService; ADieService: TDieService);
+begin
+  FKeylineService := AKeylineService;
+  FOwnsKeylineService := False;
+  FDieService := ADieService;
+  FOwnsDieService := False;
+  inherited Create(AOwner);
+end;
+
+procedure TfrmKeylineCalculator.SetKeylineService(const Value: TKeylineService);
+begin
+  if FKeylineService <> Value then
+  begin
+    if FOwnsKeylineService and Assigned(FKeylineService) then
+      FreeAndNil(FKeylineService);
+    FKeylineService := Value;
+    FOwnsKeylineService := False;
+    if Assigned(FKeylineService) and ([csLoading, csDesigning] * ComponentState = []) and Assigned(gridRecommendations) then
+    begin
+      LoadLookups;
+      DoCalculate;
+    end;
+  end;
+end;
+
+procedure TfrmKeylineCalculator.SetDieService(const Value: TDieService);
+begin
+  if FDieService <> Value then
+  begin
+    if FOwnsDieService and Assigned(FDieService) then
+      FreeAndNil(FDieService);
+    FDieService := Value;
+    FOwnsDieService := False;
+    if Assigned(FDieService) and ([csLoading, csDesigning] * ComponentState = []) and Assigned(gridRecommendations) then
+    begin
+      LoadLookups;
+      DoCalculate;
+    end;
+  end;
+end;
 
 procedure TfrmKeylineCalculator.FormCreate(Sender: TObject);
 begin
@@ -170,14 +220,14 @@ end;
 
 procedure TfrmKeylineCalculator.FormDestroy(Sender: TObject);
 begin
-  FCurrentExistingDies.Free;
-  FMachineIDs.Free;
-  FCustomerIDs.Free;
+  FreeAndNil(FCurrentExistingDies);
+  FreeAndNil(FMachineIDs);
+  FreeAndNil(FCustomerIDs);
 
   if FOwnsKeylineService then
-    FKeylineService.Free;
+    FreeAndNil(FKeylineService);
   if FOwnsDieService then
-    FDieService.Free;
+    FreeAndNil(FDieService);
 end;
 
 procedure TfrmKeylineCalculator.InitGrids;

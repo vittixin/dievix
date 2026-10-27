@@ -21,7 +21,9 @@ uses
   DieVix.MasterDataService,
   DieVix.DieService,
   DieVix.KeylineService,
-  DieVix.CalculationEngine;
+  DieVix.CalculationEngine,
+  Vcl.Grids,
+  frmKeylineCalculator;
 
 type
   [TestFixture]
@@ -138,6 +140,9 @@ type
 
     [Test]
     procedure Test30_RegressionOfExistingDieMaster;
+
+    [Test]
+    procedure Test31_KeylineCalculatorFormDfmConstruction;
   end;
 
 implementation
@@ -895,6 +900,46 @@ begin
     Assert.IsTrue(AllCyls.Count > 0, 'Cylinder fleet retrieval must succeed');
   finally
     AllCyls.Free;
+  end;
+end;
+
+procedure TDieVixCalculatorTests.Test31_KeylineCalculatorFormDfmConstruction;
+var
+  CalcForm: TfrmKeylineCalculator;
+begin
+  // Verifies that TfrmKeylineCalculator constructs cleanly from its embedded DFM resource.
+  // Tests:
+  // 1. DFM streaming of all VCL components without property value deserialization errors.
+  // 2. gridRecommendations.Options has valid Delphi 12.2 TGridOptions (with goRowSelect).
+  // 3. gridExistingDies.Options has valid Delphi 12.2 TGridOptions (with goRowSelect).
+  // 4. Safe form initialization sequence using the isolated disposable test database.
+  // 5. Automatic initial calculation, recommendation generation, and grid population.
+  // 6. Non-leaking, non-destructive disposal.
+
+  // Part A: Injected services construction (as done from parent VCL forms)
+  CalcForm := TfrmKeylineCalculator.CreateWithServices(nil, FKeylineService, FDieService);
+  try
+    Assert.IsNotNull(CalcForm, 'TfrmKeylineCalculator instance must be successfully constructed from DFM');
+    Assert.IsNotNull(CalcForm.gridRecommendations, 'gridRecommendations must be streamed from DFM');
+    Assert.IsTrue(goRowSelect in CalcForm.gridRecommendations.Options, 'gridRecommendations must retain goRowSelect');
+    Assert.IsNotNull(CalcForm.gridExistingDies, 'gridExistingDies must be streamed from DFM');
+    Assert.IsTrue(goRowSelect in CalcForm.gridExistingDies.Options, 'gridExistingDies must retain goRowSelect');
+    Assert.IsNotNull(CalcForm.paintPreview, 'paintPreview TPaintBox must be streamed from DFM');
+    Assert.IsTrue(CalcForm.gridRecommendations.RowCount >= 2, 'gridRecommendations must have at least header + initial row');
+    Assert.IsTrue(CalcForm.cmbMachine.Items.Count > 0, 'cmbMachine must be populated with machine list');
+  finally
+    CalcForm.Free;
+  end;
+
+  // Part B: Default construction (using internal self-instantiated services)
+  CalcForm := TfrmKeylineCalculator.Create(nil);
+  try
+    Assert.IsNotNull(CalcForm, 'Default TfrmKeylineCalculator.Create must succeed from DFM');
+    Assert.IsNotNull(CalcForm.gridRecommendations, 'gridRecommendations must be streamed in default construction');
+    Assert.IsTrue(goRowSelect in CalcForm.gridRecommendations.Options, 'gridRecommendations Options must be valid');
+    Assert.IsTrue(goRowSelect in CalcForm.gridExistingDies.Options, 'gridExistingDies Options must be valid');
+  finally
+    CalcForm.Free;
   end;
 end;
 

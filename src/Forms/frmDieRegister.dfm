@@ -113,28 +113,37 @@ object frmDieRegister: TfrmDieRegister
     object cmbMediaFilter: TComboBox
       Left = 670
       Top = 65
-      Width = 160
+      Width = 120
       Height = 23
       Style = csDropDownList
       TabOrder = 4
       OnChange = FilterChange
     end
     object chkOnlySub3mm: TCheckBox
-      Left = 845
+      Left = 800
       Top = 67
-      Width = 100
+      Width = 95
       Height = 17
       Caption = 'Sub-3mm Gap'
       TabOrder = 5
       OnClick = FilterChange
     end
-    object btnClearFilters: TButton
-      Left = 955
-      Top = 63
-      Width = 120
-      Height = 26
-      Caption = 'Reset Filters'
+    object chkIncludeArchived: TCheckBox
+      Left = 900
+      Top = 67
+      Width = 110
+      Height = 17
+      Caption = 'Include Archived'
       TabOrder = 6
+      OnClick = FilterChange
+    end
+    object btnClearFilters: TButton
+      Left = 1015
+      Top = 63
+      Width = 75
+      Height = 26
+      Caption = 'Reset'
+      TabOrder = 7
       OnClick = btnClearFiltersClick
     end
   end
@@ -307,7 +316,7 @@ object frmDieRegister: TfrmDieRegister
     object btnNew: TButton
       Left = 16
       Top = 8
-      Width = 110
+      Width = 95
       Height = 30
       Caption = '+ New Die...'
       Default = True
@@ -315,67 +324,85 @@ object frmDieRegister: TfrmDieRegister
       OnClick = btnNewClick
     end
     object btnEdit: TButton
-      Left = 135
+      Left = 117
       Top = 8
-      Width = 100
+      Width = 95
       Height = 30
       Caption = 'Edit Tooling...'
       TabOrder = 1
       OnClick = btnEditClick
     end
     object btnView: TButton
-      Left = 245
+      Left = 218
       Top = 8
-      Width = 90
+      Width = 85
       Height = 30
       Caption = 'View Details'
       TabOrder = 2
       OnClick = btnViewClick
     end
     object btnChangeStatus: TButton
-      Left = 345
+      Left = 309
       Top = 8
-      Width = 120
+      Width = 105
       Height = 30
       Caption = 'Change Status...'
       TabOrder = 3
       OnClick = btnChangeStatusClick
     end
     object btnRelocate: TButton
-      Left = 475
+      Left = 420
       Top = 8
-      Width = 120
+      Width = 105
       Height = 30
       Caption = 'Move Location...'
       TabOrder = 4
       OnClick = btnRelocateClick
     end
-    object btnDelete: TButton
-      Left = 605
+    object btnArchive: TButton
+      Left = 531
       Top = 8
-      Width = 90
+      Width = 115
       Height = 30
-      Caption = 'Delete'
+      Caption = 'Archive Tooling...'
       TabOrder = 5
-      OnClick = btnDeleteClick
+      OnClick = btnArchiveClick
+    end
+    object btnRestore: TButton
+      Left = 652
+      Top = 8
+      Width = 110
+      Height = 30
+      Caption = 'Restore Tooling...'
+      TabOrder = 6
+      OnClick = btnRestoreClick
+    end
+    object btnPermanentDelete: TButton
+      Left = 768
+      Top = 8
+      Width = 125
+      Height = 30
+      Caption = 'Permanent Delete...'
+      TabOrder = 7
+      OnClick = btnPermanentDeleteClick
     end
     object btnRefresh: TButton
-      Left = 705
+      Left = 899
       Top = 8
-      Width = 90
+      Width = 85
       Height = 30
       Caption = 'Refresh'
-      TabOrder = 6
+      TabOrder = 8
       OnClick = btnRefreshClick
     end
     object btnClose: TButton
-      Left = 985
+      Left = 990
       Top = 8
       Width = 90
       Height = 30
       Cancel = True
       Caption = 'Close'
-      TabOrder = 7
+      TabOrder = 9
       OnClick = btnCloseClick
     end
   end

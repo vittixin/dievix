@@ -28,7 +28,8 @@ DieVix/
 ├── migrations/
 │   ├── V001__initial_schema.sql         # Core Firebird 5.0 schema & DDL
 │   ├── V002__seed_fleet_and_masters.sql # Seed data for 16 cylinders, settings, presses
-│   └── V003__die_inventory_extension.sql# Phase 3 Die inventory, physical storage, and audit trail
+│   ├── V003__die_inventory_extension.sql# Phase 3 Die inventory, physical storage, and audit trail
+│   └── V004__die_archive_and_safety.sql # Phase 5 Safe tooling archiving & deletion safeguards
 ├── src/
 │   ├── Engine/
 │   │   └── DieVix.CalculationEngine.pas # Pure Pascal integer micrometre engine (Zero UI/DB dependency)
@@ -114,4 +115,4 @@ Produces `bin\DieVix.exe`.
 cd tests
 build_and_run_tests.bat
 ```
-Compiles and executes all 50 DUnitX test fixtures covering calculation math, database repositories, die tooling lifecycle, duplicate detection, optimistic locking, and gap validation.
+Compiles and executes all 107 DUnitX test fixtures covering calculation math, database repositories, die tooling lifecycle, duplicate detection, optimistic locking, and gap validation.

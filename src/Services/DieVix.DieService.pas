@@ -20,9 +20,9 @@ uses
 
 type
   { Custom Business & Concurrency Exceptions }
-  EDieVixValidationException = class(Exception);
-  EDieVixConcurrencyException = class(Exception);
-  EDieVixDuplicateException = class(Exception);
+  EDieVixValidationException = DieVix.Domain.EDieVixValidationException;
+  EDieVixConcurrencyException = DieVix.Domain.EDieVixConcurrencyException;
+  EDieVixDuplicateException = DieVix.Domain.EDieVixDuplicateException;
 
   { Die Application Service }
   TDieService = class
@@ -63,6 +63,26 @@ type
     { Persistence & Transactional Actions }
     function SaveDie(var ADie: TDie; const AOperator: string = 'OPERATOR'): Integer;
     function DeleteDie(const AID: Integer): Boolean;
+    function ArchiveDie(
+      const AID: Integer;
+      const AReason: string;
+      const AOperator: string = 'OPERATOR';
+      const AExpectedVersion: Integer = 0
+    ): Boolean;
+    function RestoreDie(
+      const AID: Integer;
+      const AReason: string = '';
+      const AOperator: string = 'OPERATOR';
+      const AExpectedVersion: Integer = 0
+    ): Boolean;
+    function CanPermanentlyDeleteDie(
+      const AID: Integer;
+      out ARefusalReason: string
+    ): Boolean;
+    function PermanentlyDeleteDie(
+      const AID: Integer;
+      const AAuthorized: Boolean = False
+    ): Boolean;
 
     { Lookups & Search }
     function GetDieByID(const AID: Integer): TDie;
@@ -279,7 +299,84 @@ end;
 
 function TDieService.DeleteDie(const AID: Integer): Boolean;
 begin
-  Result := FDieRepo.Delete(AID);
+  Result := PermanentlyDeleteDie(AID, True);
+end;
+
+function TDieService.ArchiveDie(
+  const AID: Integer;
+  const AReason: string;
+  const AOperator: string;
+  const AExpectedVersion: Integer
+): Boolean;
+var
+  Die: TDie;
+begin
+  if Trim(AReason) = '' then
+    raise EDieVixValidationException.Create('An archive reason is required to archive a tooling record.');
+
+  Die := GetDieByID(AID);
+  if Die.ID = 0 then
+    raise EDieVixValidationException.Create('Die record not found.');
+
+  if (AExpectedVersion > 0) and (Die.Version <> AExpectedVersion) then
+    raise EDieVixConcurrencyException.Create(
+      'Concurrency conflict: The die record has been modified by another user or session. Please reload and review before archiving.'
+    );
+
+  if SameText(Die.StatusCode, 'ARCHIVED') then
+    raise EDieVixValidationException.Create(Format('Die "%s" is already archived.', [Die.SerialNo]));
+
+  Result := FDieRepo.Archive(AID, Trim(AReason), AOperator, AExpectedVersion);
+end;
+
+function TDieService.RestoreDie(
+  const AID: Integer;
+  const AReason: string;
+  const AOperator: string;
+  const AExpectedVersion: Integer
+): Boolean;
+var
+  Die: TDie;
+begin
+  Die := GetDieByID(AID);
+  if Die.ID = 0 then
+    raise EDieVixValidationException.Create('Die record not found.');
+
+  if (AExpectedVersion > 0) and (Die.Version <> AExpectedVersion) then
+    raise EDieVixConcurrencyException.Create(
+      'Concurrency conflict: The die record has been modified by another user or session. Please reload and review before restoring.'
+    );
+
+  if not SameText(Die.StatusCode, 'ARCHIVED') then
+    raise EDieVixValidationException.Create(
+      Format('Only archived dies can be restored. Current status is "%s".', [Die.StatusCode])
+    );
+
+  Result := FDieRepo.Restore(AID, Trim(AReason), AOperator, AExpectedVersion);
+end;
+
+function TDieService.CanPermanentlyDeleteDie(
+  const AID: Integer;
+  out ARefusalReason: string
+): Boolean;
+begin
+  Result := FDieRepo.CanPermanentlyDelete(AID, ARefusalReason);
+end;
+
+function TDieService.PermanentlyDeleteDie(
+  const AID: Integer;
+  const AAuthorized: Boolean
+): Boolean;
+var
+  RefusalReason: string;
+begin
+  if not AAuthorized then
+    raise EDieVixValidationException.Create('Permanent deletion requires explicit operator authorization.');
+
+  if not CanPermanentlyDeleteDie(AID, RefusalReason) then
+    raise EDieVixValidationException.Create('Cannot permanently delete die: ' + RefusalReason);
+
+  Result := FDieRepo.PermanentlyDelete(AID);
 end;
 
 function TDieService.GetDieByID(const AID: Integer): TDie;

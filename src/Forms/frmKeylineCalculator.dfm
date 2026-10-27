@@ -497,7 +497,7 @@ object frmKeylineCalculator: TfrmKeylineCalculator
         DefaultRowHeight = 24
         FixedCols = 0
         RowCount = 2
-        Options = [goFixedVertLine, goFixedHorzLine, goVertLine, goHorzLine, goRowSelect, goSelectionActive]
+        Options = [goFixedVertLine, goFixedHorzLine, goVertLine, goHorzLine, goRowSelect]
         TabOrder = 1
         OnDrawCell = gridRecommendationsDrawCell
         OnSelectCell = gridRecommendationsSelectCell
@@ -677,7 +677,7 @@ object frmKeylineCalculator: TfrmKeylineCalculator
         DefaultRowHeight = 22
         FixedCols = 0
         RowCount = 2
-        Options = [goFixedVertLine, goFixedHorzLine, goVertLine, goHorzLine, goRowSelect, goSelectionActive]
+        Options = [goFixedVertLine, goFixedHorzLine, goVertLine, goHorzLine, goRowSelect]
         TabOrder = 1
         OnDblClick = gridExistingDiesDblClick
       end

@@ -117,6 +117,10 @@ type
     function Insert(var ADie: TDie): Integer;
     function Update(const ADie: TDie): Boolean;
     function Delete(const AID: Integer): Boolean;
+    function Archive(const AID: Integer; const AReason, AUser: string; const AExpectedVersion: Integer = 0): Boolean;
+    function Restore(const AID: Integer; const AReason, AUser: string; const AExpectedVersion: Integer = 0): Boolean;
+    function CanPermanentlyDelete(const AID: Integer; out ARefusalReason: string): Boolean;
+    function PermanentlyDelete(const AID: Integer): Boolean;
     function SerialExists(const ASerialNo: string; const AExcludeID: Integer = 0): Boolean;
     function ChangeStatus(const AID: Integer; const ANewStatusCode, AReason, AUser: string): Boolean;
     function UpdateLocation(const AID: Integer; const ARack, AShelf, ABin, ANotes, AUser: string): Boolean;
@@ -1315,7 +1319,11 @@ begin
       Sql := Sql + ' AND (AROUND_GAP_MM < 3.000) ';
 
     if AFilter.ActiveOnly then
-      Sql := Sql + ' AND (STATUS_CODE IN (''ACTIVE'', ''AVAILABLE'', ''IN_USE'')) ';
+      Sql := Sql + ' AND (STATUS_CODE IN (''ACTIVE'', ''AVAILABLE'', ''IN_USE'')) '
+    else if Trim(AFilter.StatusCode) <> '' then
+      Sql := Sql + ' AND (STATUS_CODE = :STATUS) '
+    else if not AFilter.IncludeArchived then
+      Sql := Sql + ' AND (STATUS_CODE <> ''ARCHIVED'') ';
 
     Sql := Sql + ' ORDER BY SERIAL_NO ASC';
 
@@ -1584,16 +1592,285 @@ end;
 
 function TDieRepository.Delete(const AID: Integer): Boolean;
 var
-  Qry: TFDQuery;
+  RefusalReason: string;
 begin
+  if not CanPermanentlyDelete(AID, RefusalReason) then
+    raise EDieVixValidationException.Create(
+      'Cannot delete die record: ' + RefusalReason + ' Use Archive operation instead.'
+    );
+  Result := PermanentlyDelete(AID);
+end;
+
+function TDieRepository.CanPermanentlyDelete(const AID: Integer; out ARefusalReason: string): Boolean;
+var
+  Qry: TFDQuery;
+  StagingCount, RunMetres, ImportAuditCount: Integer;
+  Serial: string;
+begin
+  ARefusalReason := '';
+  Result := False;
   Qry := CreateQuery;
   try
-    Qry.SQL.Text := 'DELETE FROM DIE WHERE ID = :ID';
+    // 1. Verify die exists
+    Qry.SQL.Text := 'SELECT SERIAL_NO, COALESCE(TOTAL_RUN_METRES, 0) AS RUN_M FROM DIE WHERE ID = :ID';
     Qry.ParamByName('ID').AsInteger := AID;
-    Qry.ExecSQL;
-    Result := (Qry.RowsAffected > 0);
+    Qry.Open;
+    if Qry.IsEmpty then
+    begin
+      ARefusalReason := 'Die tooling record does not exist.';
+      Exit;
+    end;
+    Serial := Qry.FieldByName('SERIAL_NO').AsString;
+    RunMetres := Qry.FieldByName('RUN_M').AsInteger;
+    Qry.Close;
+
+    // 2. Check historical staging import dependency
+    Qry.SQL.Text := 'SELECT COUNT(*) FROM STAGING_LEGACY_KEYLINE WHERE CLEANED_DIE_ID = :ID';
+    Qry.ParamByName('ID').AsInteger := AID;
+    Qry.Open;
+    StagingCount := Qry.Fields[0].AsInteger;
+    Qry.Close;
+
+    if StagingCount > 0 then
+    begin
+      ARefusalReason := Format(
+        'Die "%s" is linked to %d historical legacy staging import record(s) in STAGING_LEGACY_KEYLINE. ' +
+        'Archiving is required to preserve import provenance and relational integrity.',
+        [Serial, StagingCount]
+      );
+      Exit;
+    end;
+
+    // 3. Check legacy import audit history
+    Qry.SQL.Text := 'SELECT COUNT(*) FROM DIE_AUDIT_LOG WHERE DIE_ID = :ID AND ACTION = ''LEGACY_IMPORT''';
+    Qry.ParamByName('ID').AsInteger := AID;
+    Qry.Open;
+    ImportAuditCount := Qry.Fields[0].AsInteger;
+    Qry.Close;
+
+    if ImportAuditCount > 0 then
+    begin
+      ARefusalReason := Format(
+        'Die "%s" originated from a historical legacy import. ' +
+        'Archiving is required to preserve historical audit trail.',
+        [Serial]
+      );
+      Exit;
+    end;
+
+    // Safe to delete (unreferenced disposable record)
+    Result := True;
   finally
     Qry.Free;
+  end;
+end;
+
+function TDieRepository.PermanentlyDelete(const AID: Integer): Boolean;
+var
+  Qry: TFDQuery;
+  Conn: TFDConnection;
+begin
+  Result := False;
+  Conn := GetConn;
+  if not Conn.InTransaction then
+    Conn.StartTransaction;
+  try
+    Qry := CreateQuery;
+    try
+      Qry.SQL.Text := 'DELETE FROM DIE WHERE ID = :ID';
+      Qry.ParamByName('ID').AsInteger := AID;
+      Qry.ExecSQL;
+      Result := (Qry.RowsAffected > 0);
+
+      if Conn.InTransaction then
+        Conn.Commit;
+    finally
+      Qry.Free;
+    end;
+  except
+    on E: Exception do
+    begin
+      if Conn.InTransaction then
+        Conn.Rollback;
+      raise;
+    end;
+  end;
+end;
+
+function TDieRepository.Archive(const AID: Integer; const AReason, AUser: string; const AExpectedVersion: Integer): Boolean;
+var
+  Qry: TFDQuery;
+  OldStatus: string;
+  OldVersion: Integer;
+  Audit: TDieAuditEntry;
+  Conn: TFDConnection;
+begin
+  Result := False;
+  Conn := GetConn;
+  if not Conn.InTransaction then
+    Conn.StartTransaction;
+  try
+    Qry := CreateQuery;
+    try
+      // 1. Fetch current status and version
+      Qry.SQL.Text := 'SELECT STATUS_CODE, VERSION FROM DIE WHERE ID = :ID';
+      Qry.ParamByName('ID').AsInteger := AID;
+      Qry.Open;
+      if Qry.IsEmpty then
+      begin
+        if Conn.InTransaction then Conn.Rollback;
+        Exit;
+      end;
+      OldStatus := Qry.FieldByName('STATUS_CODE').AsString;
+      OldVersion := Qry.FieldByName('VERSION').AsInteger;
+      Qry.Close;
+
+      if (AExpectedVersion > 0) and (OldVersion <> AExpectedVersion) then
+      begin
+        if Conn.InTransaction then Conn.Rollback;
+        raise EDieVixConcurrencyException.Create(
+          'Concurrency conflict: The die record has been modified by another session. Please reload and review before archiving.'
+        );
+      end;
+
+      if SameText(OldStatus, 'ARCHIVED') then
+      begin
+        if Conn.InTransaction then Conn.Rollback;
+        Exit;
+      end;
+
+      // 2. Perform optimistic update
+      Qry.SQL.Text :=
+        'UPDATE DIE SET ' +
+        '  STATUS_CODE = ''ARCHIVED'', ' +
+        '  UPDATED_BY = :USER, ' +
+        '  UPDATED_AT = CURRENT_TIMESTAMP, ' +
+        '  VERSION = VERSION + 1 ' +
+        'WHERE ID = :ID AND VERSION = :EXP_VER';
+      Qry.ParamByName('USER').AsString := Trim(AUser);
+      Qry.ParamByName('ID').AsInteger := AID;
+      Qry.ParamByName('EXP_VER').AsInteger := OldVersion;
+      Qry.ExecSQL;
+
+      if Qry.RowsAffected = 0 then
+      begin
+        if Conn.InTransaction then Conn.Rollback;
+        raise EDieVixConcurrencyException.Create(
+          'Concurrency conflict: The die record has been modified by another session. Please reload and review before archiving.'
+        );
+      end;
+
+      // 3. Record audit entry
+      Audit := TDieAuditEntry.CreateEntry(AID, 'ARCHIVE', 'Tooling archived: ' + AReason, AUser);
+      Audit.FieldName := 'STATUS_CODE';
+      Audit.OldValue := OldStatus;
+      Audit.NewValue := 'ARCHIVED';
+      Audit.OverrideReason := AReason;
+      AddAuditEntry(Audit);
+
+      if Conn.InTransaction then
+        Conn.Commit;
+      Result := True;
+    finally
+      Qry.Free;
+    end;
+  except
+    on E: Exception do
+      begin
+        if Conn.InTransaction then
+          Conn.Rollback;
+        raise;
+      end;
+  end;
+end;
+
+function TDieRepository.Restore(const AID: Integer; const AReason, AUser: string; const AExpectedVersion: Integer): Boolean;
+var
+  Qry: TFDQuery;
+  OldStatus: string;
+  OldVersion: Integer;
+  Audit: TDieAuditEntry;
+  Conn: TFDConnection;
+begin
+  Result := False;
+  Conn := GetConn;
+  if not Conn.InTransaction then
+    Conn.StartTransaction;
+  try
+    Qry := CreateQuery;
+    try
+      // 1. Fetch current status and version
+      Qry.SQL.Text := 'SELECT STATUS_CODE, VERSION FROM DIE WHERE ID = :ID';
+      Qry.ParamByName('ID').AsInteger := AID;
+      Qry.Open;
+      if Qry.IsEmpty then
+      begin
+        if Conn.InTransaction then Conn.Rollback;
+        Exit;
+      end;
+      OldStatus := Qry.FieldByName('STATUS_CODE').AsString;
+      OldVersion := Qry.FieldByName('VERSION').AsInteger;
+      Qry.Close;
+
+      if (AExpectedVersion > 0) and (OldVersion <> AExpectedVersion) then
+      begin
+        if Conn.InTransaction then Conn.Rollback;
+        raise EDieVixConcurrencyException.Create(
+          'Concurrency conflict: The die record has been modified by another session. Please reload and review before restoring.'
+        );
+      end;
+
+      if not SameText(OldStatus, 'ARCHIVED') then
+      begin
+        if Conn.InTransaction then Conn.Rollback;
+        Exit;
+      end;
+
+      // 2. Perform optimistic update restoring to ACTIVE
+      Qry.SQL.Text :=
+        'UPDATE DIE SET ' +
+        '  STATUS_CODE = ''ACTIVE'', ' +
+        '  UPDATED_BY = :USER, ' +
+        '  UPDATED_AT = CURRENT_TIMESTAMP, ' +
+        '  VERSION = VERSION + 1 ' +
+        'WHERE ID = :ID AND VERSION = :EXP_VER';
+      Qry.ParamByName('USER').AsString := Trim(AUser);
+      Qry.ParamByName('ID').AsInteger := AID;
+      Qry.ParamByName('EXP_VER').AsInteger := OldVersion;
+      Qry.ExecSQL;
+
+      if Qry.RowsAffected = 0 then
+      begin
+        if Conn.InTransaction then Conn.Rollback;
+        raise EDieVixConcurrencyException.Create(
+          'Concurrency conflict: The die record has been modified by another session. Please reload and review before restoring.'
+        );
+      end;
+
+      // 3. Record audit entry
+      if Trim(AReason) <> '' then
+        Audit := TDieAuditEntry.CreateEntry(AID, 'RESTORE', 'Tooling restored: ' + AReason, AUser)
+      else
+        Audit := TDieAuditEntry.CreateEntry(AID, 'RESTORE', 'Tooling restored to active register', AUser);
+      Audit.FieldName := 'STATUS_CODE';
+      Audit.OldValue := 'ARCHIVED';
+      Audit.NewValue := 'ACTIVE';
+      Audit.OverrideReason := AReason;
+      AddAuditEntry(Audit);
+
+      if Conn.InTransaction then
+        Conn.Commit;
+      Result := True;
+    finally
+      Qry.Free;
+    end;
+  except
+    on E: Exception do
+    begin
+      if Conn.InTransaction then
+        Conn.Rollback;
+      raise;
+    end;
   end;
 end;
 
@@ -1740,6 +2017,7 @@ begin
       'SELECT * FROM V_DIE_CATALOG ' +
       'WHERE TEETH = :TEETH ' +
       '  AND SHAPE = :SHAPE ' +
+      '  AND STATUS_CODE NOT IN (''ARCHIVED'', ''SCRAPPED'') ' +
       '  AND ABS(AROUND_SIZE_MM - :AROUND) <= :TOL ' +
       '  AND ABS(ACROSS_SIZE_MM - :ACROSS) <= :TOL ' +
       '  AND (:EX_ID = 0 OR ID <> :EX_ID) ' +
@@ -1905,7 +2183,9 @@ begin
     if AFilter.ActiveOnly then
       Sql := Sql + ' AND (STATUS_CODE IN (''ACTIVE'', ''AVAILABLE'', ''IN_USE'')) '
     else if Trim(AFilter.StatusCode) <> '' then
-      Sql := Sql + ' AND (STATUS_CODE = :STATUS_CODE) ';
+      Sql := Sql + ' AND (STATUS_CODE = :STATUS_CODE) '
+    else if not AFilter.IncludeArchived then
+      Sql := Sql + ' AND (STATUS_CODE <> ''ARCHIVED'') ';
 
     if Trim(AFilter.Shape) <> '' then
       Sql := Sql + ' AND (UPPER(SHAPE) = :SHAPE) ';

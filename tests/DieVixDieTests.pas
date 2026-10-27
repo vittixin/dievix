@@ -12,14 +12,17 @@ uses
   System.SysUtils,
   System.Classes,
   System.Generics.Collections,
+  Data.DB,
   DUnitX.TestFramework,
   FireDAC.Comp.Client,
+  FireDAC.Stan.Param,
   DieVix.Domain,
   DieVix.ConnectionManager,
   DieVix.Repositories,
   DieVix.MasterDataService,
   DieVix.DieService,
-  DieVix.CalculationEngine;
+  DieVix.CalculationEngine,
+  frmDieRegister;
 
 type
   [TestFixture]
@@ -146,6 +149,52 @@ type
 
     [Test]
     procedure Test34_SmartSearch_SqlParameterizationAndPagination;
+
+    { Phase 4 / Archive & Deletion Safety Tests }
+    [Test]
+    procedure Test35_ArchiveDieReferencedByLegacyStaging;
+
+    [Test]
+    procedure Test36_PreserveStagingReferences;
+
+    [Test]
+    procedure Test37_PreserveAuditHistory;
+
+    [Test]
+    procedure Test38_ArchivedDieExcludedFromActiveSearches;
+
+    [Test]
+    procedure Test39_ArchivedDieExcludedFromSmartDieFinder;
+
+    [Test]
+    procedure Test40_ArchivedDieExcludedFromKeylineCalculatorReuse;
+
+    [Test]
+    procedure Test41_ExplicitArchivedSearchIncludesArchivedDies;
+
+    [Test]
+    procedure Test42_RestoreArchivedDie;
+
+    [Test]
+    procedure Test43_ArchiveReasonValidation;
+
+    [Test]
+    procedure Test44_ConcurrencyConflictHandling;
+
+    [Test]
+    procedure Test45_PermanentDeletionBlockedWhenDependentRecordsExist;
+
+    [Test]
+    procedure Test46_PermanentDeletionBehaviorForUnreferencedDisposableDie;
+
+    [Test]
+    procedure Test47_TransactionRollback;
+
+    [Test]
+    procedure Test48_ExistingDieRegisterRegression;
+
+    [Test]
+    procedure Test49_ExistingKeylineCalculatorRegression;
   private
     function CreateAndSaveTestDie(
       const ASerial: string;
@@ -1119,6 +1168,431 @@ begin
     FDieService.DeleteDie(Die2_ID);
     FDieService.DeleteDie(Die3_ID);
   end;
+end;
+
+procedure TDieVixDieTests.Test35_ArchiveDieReferencedByLegacyStaging;
+var
+  DieID: Integer;
+  Die: TDie;
+  Qry: TFDQuery;
+begin
+  // Create a die and link it to STAGING_LEGACY_KEYLINE
+  DieID := CreateAndSaveTestDie('DIE-ARC-STG-001', 96, 98.0, 50.0, 3, 2);
+  Qry := TFDQuery.Create(nil);
+  try
+    Qry.Connection := FConn;
+    Qry.SQL.Text := 'INSERT INTO STAGING_LEGACY_KEYLINE (RAW_SERIAL, IMPORT_STATUS, CLEANED_DIE_ID, VALIDATION_NOTE) ' +
+                    'VALUES (''RAW-STG-001'', ''IMPORTED'', :DIE_ID, ''Legacy import test link'')';
+    Qry.ParamByName('DIE_ID').AsInteger := DieID;
+    Qry.ExecSQL;
+  finally
+    Qry.Free;
+  end;
+
+  // Archive the die
+  FDieService.ArchiveDie(DieID, 'Customer rebranded artwork - tooling retired to archive', 'OPERATOR_ARCHIVE');
+
+  Die := FDieService.GetDieByID(DieID);
+  Assert.AreEqual('ARCHIVED', Die.StatusCode, 'Die status must be ARCHIVED after archiving');
+  Assert.AreEqual(2, Die.Version, 'Die version must increment after archiving');
+end;
+
+procedure TDieVixDieTests.Test36_PreserveStagingReferences;
+var
+  Die: TDie;
+  Qry: TFDQuery;
+  StagingCount: Integer;
+begin
+  Die := FDieService.GetDieBySerial('DIE-ARC-STG-001');
+  Assert.IsTrue(Die.ID > 0, 'Test die must exist');
+
+  Qry := TFDQuery.Create(nil);
+  try
+    Qry.Connection := FConn;
+    Qry.SQL.Text := 'SELECT COUNT(*) FROM STAGING_LEGACY_KEYLINE WHERE CLEANED_DIE_ID = :DIE_ID';
+    Qry.ParamByName('DIE_ID').AsInteger := Die.ID;
+    Qry.Open;
+    StagingCount := Qry.Fields[0].AsInteger;
+    Qry.Close;
+
+    Assert.IsTrue(StagingCount > 0, 'Staging record reference must remain completely intact');
+  finally
+    Qry.Free;
+  end;
+end;
+
+procedure TDieVixDieTests.Test37_PreserveAuditHistory;
+var
+  Die: TDie;
+  Qry: TFDQuery;
+  FoundArchiveAudit: Boolean;
+begin
+  Die := FDieService.GetDieBySerial('DIE-ARC-STG-001');
+  Assert.IsTrue(Die.ID > 0, 'Test die must exist');
+
+  Qry := TFDQuery.Create(nil);
+  try
+    Qry.Connection := FConn;
+    Qry.SQL.Text := 'SELECT ACTION, DETAILS, CHANGED_BY FROM DIE_AUDIT_LOG WHERE DIE_ID = :DIE_ID AND ACTION = ''ARCHIVE''';
+    Qry.ParamByName('DIE_ID').AsInteger := Die.ID;
+    Qry.Open;
+    FoundArchiveAudit := not Qry.IsEmpty;
+    if FoundArchiveAudit then
+    begin
+      Assert.AreEqual('ARCHIVE', Qry.FieldByName('ACTION').AsString);
+      Assert.IsTrue(Pos('Customer rebranded artwork', Qry.FieldByName('DETAILS').AsString) > 0, 'Audit details must record archive reason');
+      Assert.AreEqual('OPERATOR_ARCHIVE', Qry.FieldByName('CHANGED_BY').AsString);
+    end;
+    Qry.Close;
+
+    Assert.IsTrue(FoundArchiveAudit, 'Audit log must record ARCHIVE action with reason and operator');
+  finally
+    Qry.Free;
+  end;
+end;
+
+procedure TDieVixDieTests.Test38_ArchivedDieExcludedFromActiveSearches;
+var
+  Filter: TDieSearchFilter;
+  Results: TList<TDie>;
+  Found: Boolean;
+  I: Integer;
+begin
+  Filter := TDieSearchFilter.Default;
+  Filter.IncludeArchived := False;
+  Filter.SearchText := 'DIE-ARC-STG-001';
+
+  Results := FDieService.SearchDies(Filter);
+  try
+    Found := False;
+    for I := 0 to Results.Count - 1 do
+      if Results[I].SerialNo = 'DIE-ARC-STG-001' then
+        Found := True;
+
+    Assert.IsFalse(Found, 'Archived die must be excluded from default active searches');
+  finally
+    Results.Free;
+  end;
+end;
+
+procedure TDieVixDieTests.Test39_ArchivedDieExcludedFromSmartDieFinder;
+var
+  Filter: TSmartDieSizeFilter;
+  Results: TList<TSmartDieSearchResult>;
+  TotalCount: Integer;
+  Found: Boolean;
+  I: Integer;
+begin
+  Filter := TSmartDieSizeFilter.CreateDefault(98.0, 50.0, 1.0);
+  Filter.IncludeArchived := False;
+
+  Results := FDieService.SmartSearchDies(Filter, TotalCount);
+  try
+    Found := False;
+    for I := 0 to Results.Count - 1 do
+      if Results[I].Die.SerialNo = 'DIE-ARC-STG-001' then
+        Found := True;
+
+    Assert.IsFalse(Found, 'Archived die must be excluded from Smart Die Finder when IncludeArchived is False');
+  finally
+    Results.Free;
+  end;
+end;
+
+procedure TDieVixDieTests.Test40_ArchivedDieExcludedFromKeylineCalculatorReuse;
+var
+  Similar: TList<TSimilarDieResult>;
+  Found: Boolean;
+  I: Integer;
+begin
+  Similar := FDieService.FindSimilarDies(96, 98.0, 50.0, 3, 2, 'RECTANGLE', 1.0);
+  try
+    Found := False;
+    for I := 0 to Similar.Count - 1 do
+      if Similar[I].Die.SerialNo = 'DIE-ARC-STG-001' then
+        Found := True;
+
+    Assert.IsFalse(Found, 'Archived die must not be suggested for tooling reuse');
+  finally
+    Similar.Free;
+  end;
+end;
+
+procedure TDieVixDieTests.Test41_ExplicitArchivedSearchIncludesArchivedDies;
+var
+  Filter: TDieSearchFilter;
+  Results: TList<TDie>;
+  Found: Boolean;
+  I: Integer;
+begin
+  // Test 1: IncludeArchived = True
+  Filter := TDieSearchFilter.Default;
+  Filter.IncludeArchived := True;
+  Filter.SearchText := 'DIE-ARC-STG-001';
+
+  Results := FDieService.SearchDies(Filter);
+  try
+    Found := False;
+    for I := 0 to Results.Count - 1 do
+      if Results[I].SerialNo = 'DIE-ARC-STG-001' then
+        Found := True;
+
+    Assert.IsTrue(Found, 'Explicit search with IncludeArchived = True must find archived dies');
+  finally
+    Results.Free;
+  end;
+
+  // Test 2: Filter by StatusCode = 'ARCHIVED'
+  Filter := TDieSearchFilter.Default;
+  Filter.StatusCode := 'ARCHIVED';
+  Filter.SearchText := 'DIE-ARC-STG-001';
+
+  Results := FDieService.SearchDies(Filter);
+  try
+    Found := False;
+    for I := 0 to Results.Count - 1 do
+      if Results[I].SerialNo = 'DIE-ARC-STG-001' then
+        Found := True;
+
+    Assert.IsTrue(Found, 'Search with StatusCode = ARCHIVED must find archived dies');
+  finally
+    Results.Free;
+  end;
+end;
+
+procedure TDieVixDieTests.Test42_RestoreArchivedDie;
+var
+  Die: TDie;
+  Filter: TDieSearchFilter;
+  Results: TList<TDie>;
+  Qry: TFDQuery;
+  FoundRestoreAudit: Boolean;
+begin
+  Die := FDieService.GetDieBySerial('DIE-ARC-STG-001');
+  Assert.IsTrue(Die.ID > 0, 'Test die must exist');
+  Assert.AreEqual('ARCHIVED', Die.StatusCode);
+
+  // Restore the die
+  FDieService.RestoreDie(Die.ID, 'Customer re-activated original artwork', 'OPERATOR_RESTORE');
+
+  Die := FDieService.GetDieByID(Die.ID);
+  Assert.AreEqual('ACTIVE', Die.StatusCode, 'Restored die status must be ACTIVE');
+  Assert.AreEqual(3, Die.Version, 'Restored die version must increment');
+
+  // Verify RESTORE audit log
+  Qry := TFDQuery.Create(nil);
+  try
+    Qry.Connection := FConn;
+    Qry.SQL.Text := 'SELECT ACTION, DETAILS, CHANGED_BY FROM DIE_AUDIT_LOG WHERE DIE_ID = :DIE_ID AND ACTION = ''RESTORE''';
+    Qry.ParamByName('DIE_ID').AsInteger := Die.ID;
+    Qry.Open;
+    FoundRestoreAudit := not Qry.IsEmpty;
+    if FoundRestoreAudit then
+    begin
+      Assert.AreEqual('RESTORE', Qry.FieldByName('ACTION').AsString);
+      Assert.IsTrue(Pos('Customer re-activated original artwork', Qry.FieldByName('DETAILS').AsString) > 0, 'Audit details must record restore reason');
+      Assert.AreEqual('OPERATOR_RESTORE', Qry.FieldByName('CHANGED_BY').AsString);
+    end;
+    Qry.Close;
+
+    Assert.IsTrue(FoundRestoreAudit, 'Audit log must record RESTORE action');
+  finally
+    Qry.Free;
+  end;
+
+  // Verify it appears in active searches again
+  Filter := TDieSearchFilter.Default;
+  Filter.IncludeArchived := False;
+  Filter.SearchText := 'DIE-ARC-STG-001';
+  Results := FDieService.SearchDies(Filter);
+  try
+    Assert.IsTrue(Results.Count > 0, 'Restored die must appear in default active searches');
+  finally
+    Results.Free;
+  end;
+end;
+
+procedure TDieVixDieTests.Test43_ArchiveReasonValidation;
+var
+  Die: TDie;
+  RaisedEmpty: Boolean;
+begin
+  Die := FDieService.GetDieBySerial('DIE-ARC-STG-001');
+  Assert.IsTrue(Die.ID > 0, 'Test die must exist');
+
+  RaisedEmpty := False;
+  try
+    FDieService.ArchiveDie(Die.ID, '   ', 'OPERATOR');
+  except
+    on E: EDieVixValidationException do
+      RaisedEmpty := True;
+  end;
+
+  Assert.IsTrue(RaisedEmpty, 'Empty archive reason must raise EDieVixValidationException');
+end;
+
+procedure TDieVixDieTests.Test44_ConcurrencyConflictHandling;
+var
+  Die: TDie;
+  Qry: TFDQuery;
+  RaisedConflict: Boolean;
+begin
+  Die := FDieService.GetDieBySerial('DIE-ARC-STG-001');
+  Assert.IsTrue(Die.ID > 0, 'Test die must exist');
+
+  // Simulate a concurrent modification by another user incrementing version in DB
+  Qry := TFDQuery.Create(nil);
+  try
+    Qry.Connection := FConn;
+    Qry.SQL.Text := 'UPDATE DIE SET VERSION = VERSION + 10 WHERE ID = :ID';
+    Qry.ParamByName('ID').AsInteger := Die.ID;
+    Qry.ExecSQL;
+  finally
+    Qry.Free;
+  end;
+
+  // Stale attempt to archive must detect version conflict because caller holds stale Die.Version
+  RaisedConflict := False;
+  try
+    FDieService.ArchiveDie(Die.ID, 'Valid reason', 'OPERATOR', Die.Version);
+  except
+    on E: EDieVixConcurrencyException do
+      RaisedConflict := True;
+  end;
+
+  Assert.IsTrue(RaisedConflict, 'Concurrency mismatch on die archive must raise EDieVixConcurrencyException');
+end;
+
+procedure TDieVixDieTests.Test45_PermanentDeletionBlockedWhenDependentRecordsExist;
+var
+  Die: TDie;
+  CanDelete: Boolean;
+  RefusalReason: string;
+  RaisedValidation: Boolean;
+  Qry: TFDQuery;
+begin
+  Die := FDieService.GetDieBySerial('DIE-ARC-STG-001');
+  Assert.IsTrue(Die.ID > 0, 'Test die must exist');
+
+  // Pre-flight check
+  CanDelete := FDieService.CanPermanentlyDeleteDie(Die.ID, RefusalReason);
+  Assert.IsFalse(CanDelete, 'CanPermanentlyDeleteDie must return False when staging records exist');
+  Assert.IsTrue(Pos('STAGING_LEGACY_KEYLINE', RefusalReason) > 0, 'Refusal reason must explain staging link');
+
+  // Attempt permanent delete
+  RaisedValidation := False;
+  try
+    FDieService.PermanentlyDeleteDie(Die.ID, True);
+  except
+    on E: EDieVixValidationException do
+    begin
+      RaisedValidation := True;
+      Assert.IsTrue(Pos('STAGING_LEGACY_KEYLINE', E.Message) > 0, 'Validation exception must explain refusal reason');
+    end;
+  end;
+
+  Assert.IsTrue(RaisedValidation, 'PermanentlyDeleteDie must raise EDieVixValidationException when dependent rows exist');
+
+  // Clean up the staging row created for this test series so we leave database clean
+  Qry := TFDQuery.Create(nil);
+  try
+    Qry.Connection := FConn;
+    Qry.SQL.Text := 'DELETE FROM STAGING_LEGACY_KEYLINE WHERE CLEANED_DIE_ID = :ID';
+    Qry.ParamByName('ID').AsInteger := Die.ID;
+    Qry.ExecSQL;
+  finally
+    Qry.Free;
+  end;
+
+  FDieService.DeleteDie(Die.ID);
+end;
+
+procedure TDieVixDieTests.Test46_PermanentDeletionBehaviorForUnreferencedDisposableDie;
+var
+  DieID: Integer;
+  CanDelete: Boolean;
+  RefusalReason: string;
+  DeletedOK: Boolean;
+  DeletedDie: TDie;
+begin
+  DieID := CreateAndSaveTestDie('DIE-DISP-001', 98, 120.0, 60.0, 2, 2);
+
+  CanDelete := FDieService.CanPermanentlyDeleteDie(DieID, RefusalReason);
+  Assert.IsTrue(CanDelete, 'Unreferenced disposable die must be eligible for permanent deletion');
+  Assert.AreEqual('', RefusalReason, 'Refusal reason must be empty when deletion is allowed');
+
+  DeletedOK := FDieService.PermanentlyDeleteDie(DieID, True);
+  Assert.IsTrue(DeletedOK, 'PermanentlyDeleteDie must return True for disposable die');
+
+  DeletedDie := FDieService.GetDieByID(DieID);
+  Assert.AreEqual(0, DeletedDie.ID, 'Deleted die must no longer exist in database');
+end;
+
+procedure TDieVixDieTests.Test47_TransactionRollback;
+var
+  DieID: Integer;
+  OriginalDie, AfterDie: TDie;
+  RaisedEx: Boolean;
+begin
+  DieID := CreateAndSaveTestDie('DIE-TX-ROLL-001', 96, 98.0, 50.0, 3, 2);
+  try
+    OriginalDie := FDieService.GetDieByID(DieID);
+
+    // Call ArchiveDie with invalid empty reason
+    RaisedEx := False;
+    try
+      FDieService.ArchiveDie(DieID, '', 'OPERATOR');
+    except
+      on E: EDieVixValidationException do
+        RaisedEx := True;
+    end;
+    Assert.IsTrue(RaisedEx, 'Validation exception expected');
+
+    // Verify die remained in original status and version
+    AfterDie := FDieService.GetDieByID(DieID);
+    Assert.AreEqual(OriginalDie.StatusCode, AfterDie.StatusCode, 'Die status must not change after failed operation');
+    Assert.AreEqual(OriginalDie.Version, AfterDie.Version, 'Die version must not increment after failed operation');
+  finally
+    FDieService.DeleteDie(DieID);
+  end;
+end;
+
+procedure TDieVixDieTests.Test48_ExistingDieRegisterRegression;
+var
+  Filter: TDieSearchFilter;
+  Results: TList<TDie>;
+  Form: TfrmDieRegister;
+begin
+  // Test Form construction and DFM loading
+  Form := TfrmDieRegister.Create(nil);
+  try
+    Assert.IsNotNull(Form, 'frmDieRegister must be constructed successfully from DFM');
+    Assert.IsNotNull(Form.chkIncludeArchived, 'chkIncludeArchived must be bound from DFM');
+    Assert.IsNotNull(Form.btnArchive, 'btnArchive must be bound from DFM');
+    Assert.IsNotNull(Form.btnRestore, 'btnRestore must be bound from DFM');
+    Assert.IsNotNull(Form.btnPermanentDelete, 'btnPermanentDelete must be bound from DFM');
+  finally
+    Form.Free;
+  end;
+
+  // Test standard active search regression
+  Filter := TDieSearchFilter.Default;
+  Results := FDieService.SearchDies(Filter);
+  try
+    Assert.IsTrue(Results.Count > 0, 'Standard register search must return tooling records');
+  finally
+    Results.Free;
+  end;
+end;
+
+procedure TDieVixDieTests.Test49_ExistingKeylineCalculatorRegression;
+var
+  GapRes: TGapResult;
+begin
+  GapRes := CalculateAroundGapFromMm(96, 98.0, 3);
+  Assert.AreEqual(3.600, GapRes.AroundGapMm, 0.001, 'Around gap mm must be 3.600');
+  Assert.AreEqual(304.800, GapRes.CylinderRepeatMm, 0.001, 'Cylinder repeat mm must be 304.800');
+  Assert.IsTrue(GapRes.Status in [gsOptimal, gsStandardApproved], 'Gap status must be approved');
 end;
 
 initialization

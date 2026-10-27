@@ -30,6 +30,7 @@ type
     cmbStatusFilter: TComboBox;
     cmbMediaFilter: TComboBox;
     chkOnlySub3mm: TCheckBox;
+    chkIncludeArchived: TCheckBox;
     btnClearFilters: TButton;
     pnlSmartFinder: TPanel;
     lblSmartTitle: TLabel;
@@ -56,7 +57,9 @@ type
     btnView: TButton;
     btnChangeStatus: TButton;
     btnRelocate: TButton;
-    btnDelete: TButton;
+    btnArchive: TButton;
+    btnRestore: TButton;
+    btnPermanentDelete: TButton;
     btnRefresh: TButton;
     btnClose: TButton;
     gridDies: TStringGrid;
@@ -74,7 +77,9 @@ type
     procedure btnViewClick(Sender: TObject);
     procedure btnChangeStatusClick(Sender: TObject);
     procedure btnRelocateClick(Sender: TObject);
-    procedure btnDeleteClick(Sender: TObject);
+    procedure btnArchiveClick(Sender: TObject);
+    procedure btnRestoreClick(Sender: TObject);
+    procedure btnPermanentDeleteClick(Sender: TObject);
     procedure btnRefreshClick(Sender: TObject);
     procedure btnCloseClick(Sender: TObject);
     procedure gridDiesDblClick(Sender: TObject);
@@ -328,6 +333,7 @@ begin
     Filter.StatusCode := cmbStatusFilter.Text;
 
   Filter.OnlySub3mm := chkOnlySub3mm.Checked;
+  Filter.IncludeArchived := chkIncludeArchived.Checked;
 
   FDieList.Free;
   FDieList := FDieService.SearchDies(Filter);
@@ -403,6 +409,7 @@ begin
 
   Filter := TSmartDieSizeFilter.CreateDefault(AroundVal, AcrossVal, TolVal);
   Filter.IncludeSlitting := chkIncludeSlitting.Checked;
+  Filter.IncludeArchived := chkIncludeArchived.Checked;
 
   // Optional Teeth filter
   if (cmbTeethFilter.ItemIndex > 0) and (cmbTeethFilter.Text <> 'All Teeth') then
@@ -587,6 +594,7 @@ begin
   cmbStatusFilter.ItemIndex := 0;
   cmbMediaFilter.ItemIndex := 0;
   chkOnlySub3mm.Checked := False;
+  chkIncludeArchived.Checked := False;
 
   if FIsSmartSearch then
   begin
@@ -736,34 +744,154 @@ begin
   end;
 end;
 
-procedure TfrmDieRegister.btnDeleteClick(Sender: TObject);
+procedure TfrmDieRegister.btnArchiveClick(Sender: TObject);
 var
   SelectedID: Integer;
   SelectedDie: TDie;
+  Reason: string;
 begin
   SelectedID := GetSelectedDieID;
   if SelectedID <= 0 then
   begin
-    ShowMessage('Please select a die tooling record to delete.');
+    ShowMessage('Please select a die tooling record to archive.');
     Exit;
   end;
 
   SelectedDie := GetSelectedDie;
-  if MessageDlg(Format('Are you sure you want to delete die tooling "%s" (%s)?'#13#10 +
-                       'This action will permanently remove the record and its audit history.',
-                       [SelectedDie.SerialNo, SelectedDie.Description]),
-                mtConfirmation, [mbYes, mbNo], 0) = mrYes then
+  if SameText(SelectedDie.StatusCode, 'ARCHIVED') then
   begin
-    try
-      FDieService.DeleteDie(SelectedID);
-      if FIsSmartSearch then
-        PerformSmartSearch
-      else
-        LoadData;
-    except
-      on E: Exception do
-        ShowMessage('Error deleting die: ' + E.Message);
-    end;
+    ShowMessage(Format('Die tooling "%s" is already archived.', [SelectedDie.SerialNo]));
+    Exit;
+  end;
+
+  if MessageDlg(Format('Archive die tooling "%s" (%s)?'#13#10#13#10 +
+                       'It will be excluded from normal tooling searches and recommendations, ' +
+                       'but its history, audit log, and legacy import links will be preserved.',
+                       [SelectedDie.SerialNo, SelectedDie.Description]),
+                mtConfirmation, [mbYes, mbNo], 0) <> mrYes then
+    Exit;
+
+  Reason := InputBox('Archive Tooling Reason',
+                     'Enter mandatory archive reason (e.g. Artwork discontinued, Obsolete geometry):', '');
+  if Trim(Reason) = '' then
+  begin
+    ShowMessage('Archive operation cancelled: An archive reason is required.');
+    Exit;
+  end;
+
+  try
+    FDieService.ArchiveDie(SelectedID, Trim(Reason), 'OPERATOR');
+    ShowMessage(Format('Die tooling "%s" has been successfully archived.', [SelectedDie.SerialNo]));
+    if FIsSmartSearch then
+      PerformSmartSearch
+    else
+      LoadData;
+  except
+    on E: Exception do
+      ShowMessage('Error archiving die tooling: ' + E.Message);
+  end;
+end;
+
+procedure TfrmDieRegister.btnRestoreClick(Sender: TObject);
+var
+  SelectedID: Integer;
+  SelectedDie: TDie;
+  Reason: string;
+begin
+  SelectedID := GetSelectedDieID;
+  if SelectedID <= 0 then
+  begin
+    ShowMessage('Please select a die tooling record to restore.');
+    Exit;
+  end;
+
+  SelectedDie := GetSelectedDie;
+  if not SameText(SelectedDie.StatusCode, 'ARCHIVED') then
+  begin
+    ShowMessage(Format('Die tooling "%s" is currently "%s".'#13#10 +
+                       'Only archived tooling records can be restored.',
+                       [SelectedDie.SerialNo, SelectedDie.StatusCode]));
+    Exit;
+  end;
+
+  if MessageDlg(Format('Restore die tooling "%s" (%s) to active tooling status?'#13#10#13#10 +
+                       'It will become available again in active tooling searches and calculator recommendations.',
+                       [SelectedDie.SerialNo, SelectedDie.Description]),
+                mtConfirmation, [mbYes, mbNo], 0) <> mrYes then
+    Exit;
+
+  Reason := InputBox('Restore Tooling Reason',
+                     'Enter restore reason (optional, press OK to accept default):',
+                     'Reactivated for production');
+  if Trim(Reason) = '' then
+    Reason := 'Reactivated for production';
+
+  try
+    FDieService.RestoreDie(SelectedID, Trim(Reason), 'OPERATOR');
+    ShowMessage(Format('Die tooling "%s" has been successfully restored to ACTIVE status.', [SelectedDie.SerialNo]));
+    if FIsSmartSearch then
+      PerformSmartSearch
+    else
+      LoadData;
+  except
+    on E: Exception do
+      ShowMessage('Error restoring die tooling: ' + E.Message);
+  end;
+end;
+
+procedure TfrmDieRegister.btnPermanentDeleteClick(Sender: TObject);
+var
+  SelectedID: Integer;
+  SelectedDie: TDie;
+  RefusalReason, ConfirmPhrase: string;
+begin
+  SelectedID := GetSelectedDieID;
+  if SelectedID <= 0 then
+  begin
+    ShowMessage('Please select a die tooling record.');
+    Exit;
+  end;
+
+  SelectedDie := GetSelectedDie;
+
+  // Pre-flight check: Can this record be permanently deleted?
+  if not FDieService.CanPermanentlyDeleteDie(SelectedID, RefusalReason) then
+  begin
+    MessageDlg(Format('Cannot permanently delete die tooling "%s" (%s):'#13#10#13#10 +
+                      '%s'#13#10#13#10 +
+                      'To retire this die safely while preserving historical integrity, ' +
+                      'please use "Archive Tooling..." instead.',
+                      [SelectedDie.SerialNo, SelectedDie.Description, RefusalReason]),
+               mtWarning, [mbOK], 0);
+    Exit;
+  end;
+
+  // Strict double confirmation for permanent deletion
+  if MessageDlg(Format('PERMANENT DELETION WARNING:'#13#10#13#10 +
+                       'Die tooling "%s" (%s) and all its specifications will be permanently and irreversibly removed from the database.'#13#10#13#10 +
+                       'Are you absolutely sure you want to proceed?',
+                       [SelectedDie.SerialNo, SelectedDie.Description]),
+                mtConfirmation, [mbYes, mbNo], 0) <> mrYes then
+    Exit;
+
+  ConfirmPhrase := InputBox('Confirm Permanent Deletion',
+                            'Type DELETE in uppercase to authorize permanent removal:', '');
+  if ConfirmPhrase <> 'DELETE' then
+  begin
+    ShowMessage('Permanent deletion cancelled. Confirmation phrase did not match.');
+    Exit;
+  end;
+
+  try
+    FDieService.PermanentlyDeleteDie(SelectedID, True);
+    ShowMessage(Format('Die tooling "%s" has been permanently removed.', [SelectedDie.SerialNo]));
+    if FIsSmartSearch then
+      PerformSmartSearch
+    else
+      LoadData;
+  except
+    on E: Exception do
+      ShowMessage('Error deleting die tooling: ' + E.Message);
   end;
 end;
 
