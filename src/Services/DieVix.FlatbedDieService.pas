@@ -31,6 +31,8 @@ type
     FCustomerRepo: ICustomerRepository;
     FMediaRepo: IMediaRepository;
     FStatusRepo: IDieStatusRepository;
+    FLastGeneratedBase: string;
+    FLastGeneratedCounter: Integer;
   public
     constructor Create(
       AFlatbedRepo: IFlatbedDieRepository = nil;
@@ -217,15 +219,24 @@ function TFlatbedDieService.GenerateSerialNumber: string;
 var
   BaseSerial: string;
   Candidate: string;
-  Counter: Integer;
 begin
   BaseSerial := 'FBD-' + FormatDateTime('YYMMDD-HHNNSS', Now);
-  Candidate := BaseSerial;
-  Counter := 1;
+  if BaseSerial = FLastGeneratedBase then
+  begin
+    Inc(FLastGeneratedCounter);
+    Candidate := Format('%s-%d', [BaseSerial, FLastGeneratedCounter]);
+  end
+  else
+  begin
+    FLastGeneratedBase := BaseSerial;
+    FLastGeneratedCounter := 1;
+    Candidate := BaseSerial;
+  end;
+
   while CheckDuplicateSerial(Candidate, 0) do
   begin
-    Inc(Counter);
-    Candidate := Format('%s-%d', [BaseSerial, Counter]);
+    Inc(FLastGeneratedCounter);
+    Candidate := Format('%s-%d', [BaseSerial, FLastGeneratedCounter]);
   end;
   Result := Candidate;
 end;

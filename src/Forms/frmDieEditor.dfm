@@ -175,10 +175,22 @@ object frmDieEditor: TfrmDieEditor
         object edtSerial: TEdit
           Left = 110
           Top = 22
-          Width = 270
+          Width = 220
           Height = 23
           TabOrder = 0
           OnChange = ControlChange
+        end
+        object btnGenerateSerial: TButton
+          Left = 336
+          Top = 21
+          Width = 44
+          Height = 25
+          Hint = 'Generate new unique serial number'
+          Caption = 'Gen'
+          ParentShowHint = False
+          ShowHint = True
+          TabOrder = 1
+          OnClick = btnGenerateSerialClick
         end
         object cmbCustomer: TComboBox
           Left = 110
@@ -186,7 +198,7 @@ object frmDieEditor: TfrmDieEditor
           Width = 270
           Height = 23
           Style = csDropDownList
-          TabOrder = 1
+          TabOrder = 2
           OnChange = ControlChange
         end
         object edtDescription: TEdit
@@ -194,7 +206,7 @@ object frmDieEditor: TfrmDieEditor
           Top = 82
           Width = 270
           Height = 23
-          TabOrder = 2
+          TabOrder = 3
           OnChange = ControlChange
         end
         object edtInternalRef: TEdit
@@ -202,7 +214,7 @@ object frmDieEditor: TfrmDieEditor
           Top = 112
           Width = 270
           Height = 23
-          TabOrder = 3
+          TabOrder = 4
           OnChange = ControlChange
         end
         object edtCustomerRef: TEdit
@@ -210,7 +222,7 @@ object frmDieEditor: TfrmDieEditor
           Top = 142
           Width = 270
           Height = 23
-          TabOrder = 4
+          TabOrder = 5
           OnChange = ControlChange
         end
         object cmbMedia: TComboBox
@@ -219,7 +231,7 @@ object frmDieEditor: TfrmDieEditor
           Width = 270
           Height = 23
           Style = csDropDownList
-          TabOrder = 5
+          TabOrder = 6
           OnChange = ControlChange
         end
         object cmbStatus: TComboBox
@@ -228,7 +240,7 @@ object frmDieEditor: TfrmDieEditor
           Width = 270
           Height = 23
           Style = csDropDownList
-          TabOrder = 6
+          TabOrder = 7
           OnChange = ControlChange
         end
       end

@@ -33,6 +33,7 @@ type
     grpIdentification: TGroupBox;
     lblSerial: TLabel;
     edtSerial: TEdit;
+    btnGenerateSerial: TButton;
     lblCustomer: TLabel;
     cmbCustomer: TComboBox;
     lblDescription: TLabel;
@@ -119,6 +120,7 @@ type
     procedure btnCancelClick(Sender: TObject);
     procedure btnCheckSimilarClick(Sender: TObject);
     procedure btnPrintJobCardClick(Sender: TObject);
+    procedure btnGenerateSerialClick(Sender: TObject);
   private
     FDieService: TDieService;
     FDieID: Integer;
@@ -303,7 +305,12 @@ begin
     FDieID := 0;
     FVersion := 1;
     lblTitle.Caption := 'New Die Tooling Definition';
-    edtSerial.Text := '';
+    if Assigned(FDieService) then
+      edtSerial.Text := FDieService.GenerateSerialNumber('FLEXIBLE')
+    else
+      edtSerial.Text := 'FLD-' + FormatDateTime('YYMMDD-HHNNSS', Now);
+    edtSerial.ReadOnly := False;
+    btnGenerateSerial.Enabled := True;
     edtDescription.Text := '';
     edtInternalRef.Text := '';
     edtCustomerRef.Text := '';
@@ -360,7 +367,8 @@ procedure TfrmDieEditor.SetReadOnlyMode(const Value: Boolean);
 begin
   FReadOnly := Value;
   btnSave.Enabled := not FReadOnly;
-  edtSerial.ReadOnly := FReadOnly;
+  edtSerial.ReadOnly := FReadOnly or (FDieID > 0);
+  btnGenerateSerial.Enabled := not FReadOnly and (FDieID = 0);
   edtDescription.ReadOnly := FReadOnly;
   edtInternalRef.ReadOnly := FReadOnly;
   edtCustomerRef.ReadOnly := FReadOnly;
@@ -411,6 +419,8 @@ begin
     FVersion := Die.Version;
     lblTitle.Caption := 'Edit Die: ' + Die.SerialNo;
     edtSerial.Text := Die.SerialNo;
+    edtSerial.ReadOnly := FReadOnly or (FDieID > 0);
+    btnGenerateSerial.Enabled := not FReadOnly and (FDieID = 0);
     edtDescription.Text := Die.Description;
     edtInternalRef.Text := Die.InternalRef;
     edtCustomerRef.Text := Die.CustomerRef;
@@ -498,6 +508,8 @@ begin
     FVersion := 1;
     lblTitle.Caption := 'New Die Tooling (Draft from Keyline Recommendation)';
     edtSerial.Text := ADie.SerialNo;
+    edtSerial.ReadOnly := False;
+    btnGenerateSerial.Enabled := True;
     edtDescription.Text := ADie.Description;
     edtInternalRef.Text := ADie.InternalRef;
     edtCustomerRef.Text := ADie.CustomerRef;
@@ -839,6 +851,32 @@ begin
       MessageDlg('Error saving die tooling: ' + E.Message, mtError, [mbOK], 0);
     end;
   end;
+end;
+
+procedure TfrmDieEditor.btnGenerateSerialClick(Sender: TObject);
+var
+  CutTypeVal: string;
+begin
+  if FDieID > 0 then
+  begin
+    MessageDlg('Serial number cannot be regenerated for an existing saved tooling.', mtInformation, [mbOK], 0);
+    Exit;
+  end;
+
+  CutTypeVal := Trim(cmbCutType.Text);
+  if CutTypeVal = '' then
+    CutTypeVal := 'FLEXIBLE';
+
+  if Assigned(FDieService) then
+    edtSerial.Text := FDieService.GenerateSerialNumber(CutTypeVal)
+  else
+  begin
+    if SameText(CutTypeVal, 'ROTARY') then
+      edtSerial.Text := 'DIE-' + FormatDateTime('YYMMDD-HHNNSS', Now)
+    else
+      edtSerial.Text := 'FLD-' + FormatDateTime('YYMMDD-HHNNSS', Now);
+  end;
+  FIsDirty := True;
 end;
 
 procedure TfrmDieEditor.btnCancelClick(Sender: TObject);

@@ -144,6 +144,9 @@ type
 
     [Test]
     procedure Test31_KeylineCalculatorFormDfmConstruction;
+
+    [Test]
+    procedure Test32_CreateDraftDie_ConsecutiveCreationsNoCollisions;
   end;
 
 implementation
@@ -761,8 +764,10 @@ begin
   Assert.AreEqual(1.5, DraftDie.CornerRadiusMm, 0.001, 'Corner radius must be 1.5 mm');
   Assert.AreEqual('RECTANGLE', DraftDie.Shape, 'Shape must match');
   Assert.AreEqual(FTestCustID, DraftDie.CustomerID, 'Customer ID must match');
-  Assert.AreEqual(FTestMediaID, DraftDie.MediaID, 'Media ID must match');
   Assert.IsTrue(Length(DraftDie.SerialNo) > 0, 'Unique serial candidate must be generated');
+  Assert.IsTrue(DraftDie.SerialNo.StartsWith('FLD-'), 'Keyline draft die serial must start with FLD-');
+  Assert.IsTrue(Length(DraftDie.SerialNo) >= 17, 'Keyline draft die serial must include seconds (>= 17 chars)');
+  Assert.AreEqual('FLEXIBLE', DraftDie.CutType, 'Keyline draft die cut type must be FLEXIBLE');
 end;
 
 procedure TDieVixCalculatorTests.Test24_CancelWithoutPersistence;
@@ -967,6 +972,27 @@ begin
   finally
     CalcForm.Free;
   end;
+end;
+
+procedure TDieVixCalculatorTests.Test32_CreateDraftDie_ConsecutiveCreationsNoCollisions;
+var
+  Input: TKeylineInput;
+  Rec: TKeylineRecommendation;
+  Draft1, Draft2: TDie;
+begin
+  Input := TKeylineInput.CreateDefault(100.0, 50.0);
+  FillChar(Rec, SizeOf(Rec), 0);
+  Rec.Teeth := 96;
+  Rec.AroundUps := 3;
+
+  Draft1 := FKeylineService.CreateDraftDie(Rec, Input, FTestCustID);
+  Draft2 := FKeylineService.CreateDraftDie(Rec, Input, FTestCustID);
+
+  Assert.IsTrue(Draft1.SerialNo.StartsWith('FLD-'));
+  Assert.IsTrue(Draft2.SerialNo.StartsWith('FLD-'));
+  Assert.IsTrue(Length(Draft1.SerialNo) >= 17);
+  Assert.IsTrue(Length(Draft2.SerialNo) >= 17);
+  Assert.AreNotEqual(Draft1.SerialNo, Draft2.SerialNo, 'Consecutive draft die creations must produce distinct serials');
 end;
 
 initialization

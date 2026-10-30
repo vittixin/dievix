@@ -34,6 +34,8 @@ type
     FCylinderRepo: ICylinderRepository;
     FMachineRepo: IMachineRepository;
     FStatusRepo: IDieStatusRepository;
+    FLastGeneratedBase: string;
+    FLastGeneratedCounter: Integer;
   public
     constructor Create(
       ADieRepo: IDieRepository = nil;
@@ -59,6 +61,9 @@ type
 
     { Validation }
     function ValidateDie(const ADie: TDie; out AErrors: TArray<string>): Boolean;
+
+    { Serial Number Generation }
+    function GenerateSerialNumber(const ACutType: string = 'FLEXIBLE'): string;
 
     { Persistence & Transactional Actions }
     function SaveDie(var ADie: TDie; const AOperator: string = ''): Integer;
@@ -244,9 +249,44 @@ begin
   end;
 end;
 
+function TDieService.GenerateSerialNumber(const ACutType: string): string;
+var
+  Prefix: string;
+  BaseSerial: string;
+  Candidate: string;
+begin
+  if SameText(Trim(ACutType), 'ROTARY') then
+    Prefix := 'DIE-'
+  else
+    Prefix := 'FLD-';
+
+  BaseSerial := Prefix + FormatDateTime('YYMMDD-HHNNSS', Now);
+  if BaseSerial = FLastGeneratedBase then
+  begin
+    Inc(FLastGeneratedCounter);
+    Candidate := Format('%s-%d', [BaseSerial, FLastGeneratedCounter]);
+  end
+  else
+  begin
+    FLastGeneratedBase := BaseSerial;
+    FLastGeneratedCounter := 1;
+    Candidate := BaseSerial;
+  end;
+
+  while CheckDuplicateSerial(Candidate, 0) do
+  begin
+    Inc(FLastGeneratedCounter);
+    Candidate := Format('%s-%d', [BaseSerial, FLastGeneratedCounter]);
+  end;
+  Result := Candidate;
+end;
+
 function TDieService.CheckDuplicateSerial(const ASerialNo: string; const AExcludeID: Integer): Boolean;
 begin
-  Result := FDieRepo.SerialExists(ASerialNo, AExcludeID);
+  if Assigned(FDieRepo) then
+    Result := FDieRepo.SerialExists(ASerialNo, AExcludeID)
+  else
+    Result := False;
 end;
 
 function TDieService.SaveDie(var ADie: TDie; const AOperator: string): Integer;
@@ -257,6 +297,8 @@ var
   UpdatedOK: Boolean;
 begin
   NormSerial := Trim(ADie.SerialNo);
+  if (ADie.ID = 0) and (NormSerial = '') then
+    NormSerial := GenerateSerialNumber(ADie.CutType);
   ADie.SerialNo := NormSerial;
 
   // 1. Check duplicate serial

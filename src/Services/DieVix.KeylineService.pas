@@ -28,6 +28,8 @@ type
     FMachineCylinderRepo: IMachineCylinderRepository;
     FDieRepo: IDieRepository;
     FSettingRepo: IAppSettingRepository;
+    FLastGeneratedBase: string;
+    FLastGeneratedCounter: Integer;
   public
     constructor Create(
       ACylinderRepo: ICylinderRepository = nil;
@@ -165,21 +167,29 @@ function TKeylineService.CreateDraftDie(
 ): TDie;
 var
   SerialCandidate: string;
-  Counter: Integer;
+  BaseSerial: string;
 begin
   FillChar(Result, SizeOf(Result), 0);
 
-  // Generate unique draft serial candidate
-  Counter := 1;
-  repeat
-    SerialCandidate := Format('DIE-%dT-%dx%d-%d', [
-      ARec.Teeth,
-      Trunc(AInput.LabelAroundMm),
-      Trunc(AInput.LabelAcrossMm),
-      Counter
-    ]);
-    Inc(Counter);
-  until not FDieRepo.SerialExists(SerialCandidate, 0);
+  // Generate unique draft serial candidate with seconds and in-memory collision guard
+  BaseSerial := 'FLD-' + FormatDateTime('YYMMDD-HHNNSS', Now);
+  if BaseSerial = FLastGeneratedBase then
+  begin
+    Inc(FLastGeneratedCounter);
+    SerialCandidate := Format('%s-%d', [BaseSerial, FLastGeneratedCounter]);
+  end
+  else
+  begin
+    FLastGeneratedBase := BaseSerial;
+    FLastGeneratedCounter := 1;
+    SerialCandidate := BaseSerial;
+  end;
+
+  while Assigned(FDieRepo) and FDieRepo.SerialExists(SerialCandidate, 0) do
+  begin
+    Inc(FLastGeneratedCounter);
+    SerialCandidate := Format('%s-%d', [BaseSerial, FLastGeneratedCounter]);
+  end;
 
   Result := TDie.CreateNew(
     SerialCandidate,
@@ -189,6 +199,7 @@ begin
     ARec.AroundUps,
     AInput.AcrossUps
   );
+  Result.CutType := 'FLEXIBLE';
 
   Result.PitchUm := ARec.PitchUm;
   Result.AcrossGapMm := AInput.AcrossGapMm;

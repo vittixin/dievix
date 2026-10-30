@@ -202,6 +202,15 @@ type
 
     [Test]
     procedure Test51_DeletingDiePreservesAuditRowsUnchanged;
+
+    [Test]
+    procedure Test52_GenerateSerialNumber_FlexibleDie_IncludesSeconds;
+
+    [Test]
+    procedure Test53_GenerateSerialNumber_RotaryDie_Prefix;
+
+    [Test]
+    procedure Test54_SaveDie_AutoGeneratesSerialIfEmpty;
   private
     function CreateAndSaveTestDie(
       const ASerial: string;
@@ -1796,6 +1805,52 @@ begin
     BeforeRows.Free;
     // Cleanup audit records for test die
     FConn.ExecSQL('DELETE FROM DIE_AUDIT_LOG WHERE DIE_ID = ' + IntToStr(DieID));
+  end;
+end;
+
+procedure TDieVixDieTests.Test52_GenerateSerialNumber_FlexibleDie_IncludesSeconds;
+var
+  Serial1, Serial2: string;
+begin
+  Serial1 := FDieService.GenerateSerialNumber('FLEXIBLE');
+  Assert.IsTrue(Serial1.StartsWith('FLD-'), 'Flexible die serial must start with FLD-');
+  Assert.IsTrue(Length(Serial1) >= 17, 'Serial must have at least 17 chars (FLD-YYMMDD-HHNNSS): ' + Serial1);
+  Assert.AreEqual('-', Serial1[4], 'Expected dash after FLD');
+  Assert.AreEqual('-', Serial1[11], 'Expected dash after date');
+
+  Serial2 := FDieService.GenerateSerialNumber('FLEXIBLE');
+  Assert.IsTrue(Serial2.StartsWith('FLD-'));
+  Assert.AreNotEqual(Serial1, Serial2, 'Consecutive serial generations must produce distinct values');
+end;
+
+procedure TDieVixDieTests.Test53_GenerateSerialNumber_RotaryDie_Prefix;
+var
+  Serial: string;
+begin
+  Serial := FDieService.GenerateSerialNumber('ROTARY');
+  Assert.IsTrue(Serial.StartsWith('DIE-'), 'Rotary die serial must start with DIE-');
+  Assert.IsTrue(Length(Serial) >= 17, 'Serial must have at least 17 chars (DIE-YYMMDD-HHNNSS): ' + Serial);
+end;
+
+procedure TDieVixDieTests.Test54_SaveDie_AutoGeneratesSerialIfEmpty;
+var
+  Die, Fetched: TDie;
+  SavedID: Integer;
+begin
+  SavedID := 0;
+  try
+    Die := TDie.CreateNew('', 96, 50.0, 50.0, 1, 1);
+    Die.CutType := 'FLEXIBLE';
+    Die.Description := 'Test Auto-generated Serial Flexi Die';
+    SavedID := FDieService.SaveDie(Die, 'TEST_RUNNER');
+    Assert.IsTrue(SavedID > 0, 'Die with empty serial must save successfully via auto-generation');
+
+    Fetched := FDieService.GetDieByID(SavedID);
+    Assert.IsTrue(Fetched.SerialNo.StartsWith('FLD-'), 'Auto-generated serial must start with FLD- for flexible die');
+    Assert.IsTrue(Length(Fetched.SerialNo) >= 17, 'Auto-generated serial must include seconds');
+  finally
+    if SavedID > 0 then
+      FDieService.PermanentlyDeleteDie(SavedID, True);
   end;
 end;
 
