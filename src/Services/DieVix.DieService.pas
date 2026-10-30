@@ -1,7 +1,7 @@
 unit DieVix.DieService;
 
 {==============================================================================
-  DieVix – Rotary Die & Keyline Manager
+  DieVix - Rotary Die & Keyline Manager
   Die Application Service Layer
   Orchestrates tooling business rules, integer micrometre gap validation,
   duplicate detection, similar die reuse search, and optimistic concurrency.
@@ -54,25 +54,25 @@ type
       const ATeeth: Integer;
       const AAroundSizeMm: Double;
       const AAroundUps: Integer;
-      const APitchUm: Integer = 3175
+      const APitchUm: Integer = STANDARD_PITCH_UM
     ): TGapResult;
 
     { Validation }
     function ValidateDie(const ADie: TDie; out AErrors: TArray<string>): Boolean;
 
     { Persistence & Transactional Actions }
-    function SaveDie(var ADie: TDie; const AOperator: string = 'OPERATOR'): Integer;
+    function SaveDie(var ADie: TDie; const AOperator: string = ''): Integer;
     function DeleteDie(const AID: Integer): Boolean;
     function ArchiveDie(
       const AID: Integer;
       const AReason: string;
-      const AOperator: string = 'OPERATOR';
+      const AOperator: string = '';
       const AExpectedVersion: Integer = 0
     ): Boolean;
     function RestoreDie(
       const AID: Integer;
       const AReason: string = '';
-      const AOperator: string = 'OPERATOR';
+      const AOperator: string = '';
       const AExpectedVersion: Integer = 0
     ): Boolean;
     function CanPermanentlyDeleteDie(
@@ -94,13 +94,13 @@ type
     function ChangeDieStatus(
       const AID: Integer;
       const ANewStatusCode, AReason: string;
-      const AOperator: string = 'OPERATOR'
+      const AOperator: string = ''
     ): Boolean;
 
     function UpdateDieLocation(
       const AID: Integer;
       const ARack, AShelf, ABin, ANotes: string;
-      const AOperator: string = 'OPERATOR'
+      const AOperator: string = ''
     ): Boolean;
 
     { Duplicate and Similar Die Detection }
@@ -161,16 +161,16 @@ end;
 
 function TDieService.GetMinAroundGapUm: Int64;
 begin
-  Result := FSettingRepo.GetInt('MIN_AROUND_GAP_UM', 3000);
+  Result := FSettingRepo.GetInt('MIN_AROUND_GAP_UM', DEFAULT_MIN_GAP_UM);
   if Result <= 0 then
-    Result := 3000;
+    Result := DEFAULT_MIN_GAP_UM;
 end;
 
 function TDieService.GetHardBlockGapUm: Int64;
 begin
-  Result := FSettingRepo.GetInt('HARD_BLOCK_GAP_UM', 0);
+  Result := FSettingRepo.GetInt('HARD_BLOCK_GAP_UM', DEFAULT_HARD_BLOCK_GAP_UM);
   if Result < 0 then
-    Result := 0;
+    Result := DEFAULT_HARD_BLOCK_GAP_UM;
 end;
 
 function TDieService.CalculateDieGeometry(
@@ -186,16 +186,16 @@ begin
   MinGapUm := GetMinAroundGapUm;
   HardBlockUm := GetHardBlockGapUm;
   if APitchUm <= 0 then
-    ActualPitch := 3175
+    ActualPitch := STANDARD_PITCH_UM
   else
     ActualPitch := APitchUm;
 
-  Result := CalculateAroundGapFromMm(
+  Result := CalculateAroundGap(
     ATeeth,
-    AAroundSizeMm,
+    MmToUm(AAroundSizeMm),
     AAroundUps,
-    UmToMm(MinGapUm),
-    UmToMm(HardBlockUm),
+    MinGapUm,
+    HardBlockUm,
     ActualPitch
   );
 end;
@@ -234,7 +234,7 @@ begin
       if GapRes.Status = gsMechanicallyRejected then
         ErrList.Add(Format('Mechanical error: %s', [GapRes.StatusMessage]))
       else if GapRes.RequiresOverrideReason and (Trim(ADie.OverrideReason) = '') then
-        ErrList.Add(Format('Around gap (%0.3f mm) is below recommended 3.000 mm minimum. An Override Reason is required to save.', [GapRes.AroundGapMm]));
+        ErrList.Add(Format('Around gap (%0.3f mm) is below recommended %0.3f mm minimum. An Override Reason is required to save.', [GapRes.AroundGapMm, UmToMm(GetMinAroundGapUm)]));
     end;
 
     AErrors := ErrList.ToArray;
@@ -279,15 +279,20 @@ begin
     raise EDieVixValidationException.Create('Validation failed: ' + string.Join('; ', Errors));
 
   // 4. Update audit actor
+  var Actor := Trim(AOperator);
+  if (Actor = '') or SameText(Actor, 'OPERATOR') then
+    Actor := GetCurrentAppUser;
+
   if ADie.ID = 0 then
   begin
-    ADie.CreatedBy := AOperator;
-    ADie.UpdatedBy := AOperator;
+    if (Trim(ADie.CreatedBy) = '') or SameText(Trim(ADie.CreatedBy), 'OPERATOR') then
+      ADie.CreatedBy := Actor;
+    ADie.UpdatedBy := Actor;
     Result := FDieRepo.Insert(ADie);
   end
   else
   begin
-    ADie.UpdatedBy := AOperator;
+    ADie.UpdatedBy := Actor;
     UpdatedOK := FDieRepo.Update(ADie);
     if not UpdatedOK then
       raise EDieVixConcurrencyException.Create(
@@ -310,6 +315,7 @@ function TDieService.ArchiveDie(
 ): Boolean;
 var
   Die: TDie;
+  Op: string;
 begin
   if Trim(AReason) = '' then
     raise EDieVixValidationException.Create('An archive reason is required to archive a tooling record.');
@@ -326,7 +332,11 @@ begin
   if SameText(Die.StatusCode, 'ARCHIVED') then
     raise EDieVixValidationException.Create(Format('Die "%s" is already archived.', [Die.SerialNo]));
 
-  Result := FDieRepo.Archive(AID, Trim(AReason), AOperator, AExpectedVersion);
+  Op := Trim(AOperator);
+  if (Op = '') or SameText(Op, 'OPERATOR') then
+    Op := GetCurrentAppUser;
+
+  Result := FDieRepo.Archive(AID, Trim(AReason), Op, AExpectedVersion);
 end;
 
 function TDieService.RestoreDie(
@@ -337,6 +347,7 @@ function TDieService.RestoreDie(
 ): Boolean;
 var
   Die: TDie;
+  Op: string;
 begin
   Die := GetDieByID(AID);
   if Die.ID = 0 then
@@ -352,7 +363,11 @@ begin
       Format('Only archived dies can be restored. Current status is "%s".', [Die.StatusCode])
     );
 
-  Result := FDieRepo.Restore(AID, Trim(AReason), AOperator, AExpectedVersion);
+  Op := Trim(AOperator);
+  if (Op = '') or SameText(Op, 'OPERATOR') then
+    Op := GetCurrentAppUser;
+
+  Result := FDieRepo.Restore(AID, Trim(AReason), Op, AExpectedVersion);
 end;
 
 function TDieService.CanPermanentlyDeleteDie(
@@ -403,16 +418,26 @@ function TDieService.ChangeDieStatus(
   const AID: Integer;
   const ANewStatusCode, AReason, AOperator: string
 ): Boolean;
+var
+  Op: string;
 begin
-  Result := FDieRepo.ChangeStatus(AID, ANewStatusCode, AReason, AOperator);
+  Op := Trim(AOperator);
+  if (Op = '') or SameText(Op, 'OPERATOR') then
+    Op := GetCurrentAppUser;
+  Result := FDieRepo.ChangeStatus(AID, ANewStatusCode, AReason, Op);
 end;
 
 function TDieService.UpdateDieLocation(
   const AID: Integer;
   const ARack, AShelf, ABin, ANotes, AOperator: string
 ): Boolean;
+var
+  Op: string;
 begin
-  Result := FDieRepo.UpdateLocation(AID, ARack, AShelf, ABin, ANotes, AOperator);
+  Op := Trim(AOperator);
+  if (Op = '') or SameText(Op, 'OPERATOR') then
+    Op := GetCurrentAppUser;
+  Result := FDieRepo.UpdateLocation(AID, ARack, AShelf, ABin, ANotes, Op);
 end;
 
 function TDieService.FindSimilarDies(

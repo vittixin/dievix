@@ -1,7 +1,7 @@
 object frmMachineMaster: TfrmMachineMaster
   Left = 0
   Top = 0
-  Caption = 'Machine Master — DieVix'
+  Caption = 'Machine Master - DieVix'
   ClientHeight = 520
   ClientWidth = 780
   Color = clBtnFace

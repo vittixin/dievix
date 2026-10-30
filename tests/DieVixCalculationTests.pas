@@ -1,7 +1,7 @@
 unit DieVixCalculationTests;
 
 {==============================================================================
-  DieVix – Rotary Die & Keyline Manager
+  DieVix - Rotary Die & Keyline Manager
   DUnitX Test Suite: Rotary Die Engine & Integer Precision Verification
 ==============================================================================}
 
@@ -56,6 +56,21 @@ type
 
     [Test]
     procedure TestFullFleetRecommendationScan;
+
+    [Test]
+    procedure TestMmToUmRoundHalfAwayFromZero;
+
+    [Test]
+    procedure TestFindOptimalCylinderForUpsEmptyFleetRejected;
+
+    [Test]
+    procedure TestFindOptimalCylinderForUpsWithFleetFilter;
+
+    [Test]
+    procedure TestAcrossFitIntegerMicrometrePrecision;
+
+    [Test]
+    procedure TestMmToUmEpsilonNecessity;
   end;
 
 implementation
@@ -318,6 +333,111 @@ begin
   end;
 
   Assert.IsTrue(FoundOptimalForUps3, 'Must discover 98T as optimal for 3 ups in full scan');
+end;
+
+procedure TDieVixCalculationTests.TestMmToUmRoundHalfAwayFromZero;
+begin
+  // Round half away from zero (standard arithmetic/commercial rounding):
+  // 0.0005 mm = 0.5 um -> rounds to 1 um (banker's rounding incorrectly rounded 0.5 to 0)
+  Assert.AreEqual(Int64(1), MmToUm(0.0005), '0.0005 mm must round up to 1 um');
+
+  // Negative half rounds away from zero to -1 um
+  Assert.AreEqual(Int64(-1), MmToUm(-0.0005), '-0.0005 mm must round down away from zero to -1 um');
+
+  // 2.9995 mm = 2999.5 um -> rounds to 3000 um
+  Assert.AreEqual(Int64(3000), MmToUm(2.9995), '2.9995 mm must round to 3000 um');
+
+  // Negative 2.9995 mm rounds to -3000 um
+  Assert.AreEqual(Int64(-3000), MmToUm(-2.9995), '-2.9995 mm must round to -3000 um');
+
+  // Boundary checks below 0.5 fractional
+  Assert.AreEqual(Int64(0), MmToUm(0.000499), '0.000499 mm must round to 0 um');
+  Assert.AreEqual(Int64(0), MmToUm(-0.000499), '-0.000499 mm must round to 0 um');
+  Assert.AreEqual(Int64(0), MmToUm(0.0004), '0.0004 mm must round to 0 um');
+  Assert.AreEqual(Int64(0), MmToUm(-0.0004), '-0.0004 mm must round to 0 um');
+
+  // Whole numbers and exact standard values
+  Assert.AreEqual(Int64(3000), MmToUm(3.0), '3.0 mm must convert to exactly 3000 um');
+  Assert.AreEqual(Int64(3175), MmToUm(3.175), '3.175 mm must convert to exactly 3175 um');
+  Assert.AreEqual(Int64(0), MmToUm(0.0), '0.0 mm must convert to 0 um');
+end;
+
+procedure TDieVixCalculationTests.TestMmToUmEpsilonNecessity;
+var
+  ValDouble: Double;
+  WithoutEpsilon: Int64;
+begin
+  // Due to binary floating point representation limits in IEEE 754 64-bit Double,
+  // 0.5005 * 1000.0 evaluates to 500.49999999999994316... (strictly < 500.5).
+  // Without the 1E-9 epsilon, adding 0.5 yields 500.99999999999994316..., which Trunc truncates to 500.
+  ValDouble := 0.5005;
+  WithoutEpsilon := Trunc(ValDouble * 1000.0 + 0.5);
+  Assert.AreEqual(Int64(500), WithoutEpsilon, 'Naive round without epsilon truncates 0.5005 mm to 500 um');
+
+  // With the 1E-9 epsilon, MmToUm correctly produces 501 um (this test fails if epsilon is removed from MmToUm)
+  Assert.AreEqual(Int64(501), MmToUm(0.5005), 'MmToUm with epsilon correctly rounds 0.5005 mm to 501 um');
+
+  // Also verify negative counterpart
+  ValDouble := -0.5005;
+  WithoutEpsilon := Trunc(ValDouble * 1000.0 - 0.5);
+  Assert.AreEqual(Int64(-500), WithoutEpsilon, 'Naive round without epsilon truncates -0.5005 mm to -500 um');
+  Assert.AreEqual(Int64(-501), MmToUm(-0.5005), 'MmToUm with epsilon correctly rounds -0.5005 mm to -501 um');
+end;
+
+procedure TDieVixCalculationTests.TestFindOptimalCylinderForUpsEmptyFleetRejected;
+var
+  Rec: TRecommendationResult;
+  IncompatibleFleet: TArray<Integer>;
+begin
+  // Pass a fleet filter that has no matching cylinders in the fleet
+  SetLength(IncompatibleFleet, 1);
+  IncompatibleFleet[0] := 999; // 999T does not exist in DEFAULT_CYLINDER_FLEET
+
+  Rec := FindOptimalCylinderForUps(100.0, 3, nil, 3.0, 0.0, STANDARD_PITCH_UM, IncompatibleFleet);
+
+  Assert.AreEqual(gsMechanicallyRejected, Rec.Status, 'Empty fleet match must return gsMechanicallyRejected');
+  Assert.IsFalse(Rec.IsOptimal, 'Must not be marked optimal');
+  Assert.IsTrue(Pos('No cylinders available', Rec.StatusText) > 0, 'StatusText must clearly explain rejection');
+  Assert.AreEqual(0, Rec.Teeth, 'Teeth must be 0 for empty fleet rejection');
+end;
+
+procedure TDieVixCalculationTests.TestFindOptimalCylinderForUpsWithFleetFilter;
+var
+  Rec: TRecommendationResult;
+  RestrictedFleet: TArray<Integer>;
+begin
+  // For 100 mm label, 3 ups, required repeat is 309.0 mm.
+  // Standard fleet would pick 98T (311.15 mm).
+  // Restrict fleet to 96T (304.8 mm, too small) and 120T (381.0 mm, fits).
+  SetLength(RestrictedFleet, 2);
+  RestrictedFleet[0] := 96;
+  RestrictedFleet[1] := 120;
+
+  Rec := FindOptimalCylinderForUps(100.0, 3, nil, 3.0, 0.0, STANDARD_PITCH_UM, RestrictedFleet);
+
+  Assert.AreEqual(120, Rec.Teeth, 'Restricted fleet must select 120T when 98T is not in fleet');
+  Assert.AreEqual(gsOptimal, Rec.Status, '120T must be optimal within restricted fleet');
+  Assert.IsTrue(Rec.IsOptimal);
+  Assert.AreEqual(381.000, Rec.RepeatMm, 0.001);
+end;
+
+procedure TDieVixCalculationTests.TestAcrossFitIntegerMicrometrePrecision;
+var
+  WebFit: TWebFitResult;
+begin
+  // Label Across = 50.001 mm, 2 ups, across gap = 3.001 mm, margin = 5.001 mm
+  // In integer um:
+  //   Tooling = 2 * 50001 + 3001 = 100002 + 3001 = 103003 um
+  //   Required Web = 103003 + 2 * 5001 = 113005 um = 113.005 mm
+  WebFit := CheckAcrossFit(50.001, 2, 3.001, 5.001, 113.005);
+  Assert.IsTrue(WebFit.Fits, 'Exact micrometre fit must succeed');
+  Assert.AreEqual(113.005, WebFit.RequiredWebWidthMm, 0.001);
+  Assert.AreEqual(0.0, WebFit.ExcessMm, 0.001);
+
+  // 1 um below required web width (113.004 mm) must fail
+  WebFit := CheckAcrossFit(50.001, 2, 3.001, 5.001, 113.004);
+  Assert.IsFalse(WebFit.Fits, '1 um deficit must fail fit check');
+  Assert.AreEqual(0.001, WebFit.ExcessMm, 0.0001);
 end;
 
 initialization

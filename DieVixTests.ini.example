@@ -1,0 +1,13 @@
+[Database]
+Mode=Server
+Server=localhost
+Port=3050
+; WARNING: Automated tests apply migrations and clean test records.
+; The Database filename MUST contain 'disposable' or 'test' (case-insensitive)
+; and MUST NOT be the same database as DieVix.ini.
+Database=tmp/dievix_disposable_test.fdb
+UserName=SYSDBA
+Password=masterkey
+VendorLib=C:\Program Files (x86)\Firebird\Firebird_5_0\fbclient.dll
+CharacterSet=UTF8
+Timeout=15

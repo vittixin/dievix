@@ -1,7 +1,7 @@
 unit DieVix.Repositories;
 
 {==============================================================================
-  DieVix – Rotary Die & Keyline Manager
+  DieVix - Rotary Die & Keyline Manager
   FireDAC Data Access Repositories for Firebird 5.0
   Fully parameterized SQL with transaction safety and clean mapping.
 ==============================================================================}
@@ -138,6 +138,36 @@ type
     ): TList<TSmartDieSearchResult>;
     function GetAuditLog(const ADieID: Integer): TList<TDieAuditEntry>;
     function AddAuditEntry(const AEntry: TDieAuditEntry): Boolean;
+  end;
+
+  { Flatbed Die Tooling Repository }
+  TFlatbedDieRepository = class(TBaseRepository, IFlatbedDieRepository)
+  private
+    function MapFromQuery(Qry: TFDQuery): TFlatbedDie;
+  public
+    function GetAll: TList<TFlatbedDie>;
+    function GetByID(const AID: Integer): TFlatbedDie;
+    function GetBySerial(const ASerialNo: string): TFlatbedDie;
+    function Search(const AFilter: TFlatbedDieSearchFilter): TList<TFlatbedDie>;
+    function SearchMatchingDimensions(
+      const ATargetAroundMm, ATargetAcrossMm: Double;
+      const ACategory: string = '';
+      const AToleranceMm: Double = 0.500;
+      const AAllowRotation: Boolean = True;
+      const AActiveOnly: Boolean = True
+    ): TList<TFlatbedDieSearchResult>;
+    function Insert(var ADie: TFlatbedDie): Integer;
+    function Update(const ADie: TFlatbedDie): Boolean;
+    function Delete(const AID: Integer): Boolean;
+    function Archive(const AID: Integer; const AReason, AUser: string; const AExpectedVersion: Integer = 0): Boolean;
+    function Restore(const AID: Integer; const AReason, AUser: string; const AExpectedVersion: Integer = 0): Boolean;
+    function CanPermanentlyDelete(const AID: Integer; out ARefusalReason: string): Boolean;
+    function PermanentlyDelete(const AID: Integer): Boolean;
+    function SerialExists(const ASerialNo: string; const AExcludeID: Integer = 0): Boolean;
+    function ChangeStatus(const AID: Integer; const ANewStatusCode, AReason, AUser: string): Boolean;
+    function UpdateLocation(const AID: Integer; const ARack, AShelf, ABin, ANotes, AUser: string): Boolean;
+    function GetAuditLog(const AFlatbedDieID: Integer): TList<TFlatbedDieAuditEntry>;
+    function AddAuditEntry(const AEntry: TFlatbedDieAuditEntry): Boolean;
   end;
 
 implementation
@@ -1172,7 +1202,7 @@ begin
   Result.Teeth := Qry.FieldByName('TEETH').AsInteger;
   Result.PitchUm := Qry.FieldByName('PITCH_UM').AsInteger;
   if Result.PitchUm = 0 then
-    Result.PitchUm := 3175;
+    Result.PitchUm := STANDARD_PITCH_UM;
 
   Result.RepeatMm := TeethToRepeatMm(Result.Teeth, Result.PitchUm);
   Result.RepeatInch := TeethToRepeatInch(Result.Teeth);
@@ -1402,7 +1432,7 @@ begin
     Qry.ParamByName('TEETH').AsInteger := ADie.Teeth;
 
     if ADie.PitchUm <= 0 then
-      ADie.PitchUm := 3175;
+      ADie.PitchUm := STANDARD_PITCH_UM;
     Qry.ParamByName('PITCH_UM').AsInteger := ADie.PitchUm;
 
     Qry.ParamByName('AROUND_SIZE_MM').AsFloat := ADie.AroundSizeMm;
@@ -1444,15 +1474,15 @@ begin
     Qry.ParamByName('TOTAL_RUN_METRES').AsInteger := ADie.TotalRunMetres;
     Qry.ParamByName('NOTES').AsString := Trim(ADie.Notes);
 
-    if Trim(ADie.CreatedBy) <> '' then
+    if (Trim(ADie.CreatedBy) <> '') and not SameText(Trim(ADie.CreatedBy), 'OPERATOR') then
       Qry.ParamByName('CREATED_BY').AsString := Trim(ADie.CreatedBy)
     else
-      Qry.ParamByName('CREATED_BY').AsString := 'OPERATOR';
+      Qry.ParamByName('CREATED_BY').AsString := GetCurrentAppUser;
 
-    if Trim(ADie.UpdatedBy) <> '' then
+    if (Trim(ADie.UpdatedBy) <> '') and not SameText(Trim(ADie.UpdatedBy), 'OPERATOR') then
       Qry.ParamByName('UPDATED_BY').AsString := Trim(ADie.UpdatedBy)
     else
-      Qry.ParamByName('UPDATED_BY').AsString := 'OPERATOR';
+      Qry.ParamByName('UPDATED_BY').AsString := GetCurrentAppUser;
 
     Qry.Open;
     Result := Qry.Fields[0].AsInteger;
@@ -1461,7 +1491,7 @@ begin
     Qry.Close;
 
     // Log Creation Audit Entry
-    Audit := TDieAuditEntry.CreateEntry(Result, 'CREATE', 'Die tooling registered', ADie.CreatedBy);
+    Audit := TDieAuditEntry.CreateEntry(Result, 'CREATE', 'Die tooling registered', ADie.CreatedBy, ADie.SerialNo);
     Audit.OverrideReason := ADie.OverrideReason;
     AddAuditEntry(Audit);
   finally
@@ -1530,7 +1560,7 @@ begin
     Qry.ParamByName('TEETH').AsInteger := ADie.Teeth;
 
     if ADie.PitchUm <= 0 then
-      Qry.ParamByName('PITCH_UM').AsInteger := 3175
+      Qry.ParamByName('PITCH_UM').AsInteger := STANDARD_PITCH_UM
     else
       Qry.ParamByName('PITCH_UM').AsInteger := ADie.PitchUm;
 
@@ -1568,10 +1598,10 @@ begin
     Qry.ParamByName('TOTAL_RUN_METRES').AsInteger := ADie.TotalRunMetres;
     Qry.ParamByName('NOTES').AsString := Trim(ADie.Notes);
 
-    if Trim(ADie.UpdatedBy) <> '' then
+    if (Trim(ADie.UpdatedBy) <> '') and not SameText(Trim(ADie.UpdatedBy), 'OPERATOR') then
       Qry.ParamByName('UPDATED_BY').AsString := Trim(ADie.UpdatedBy)
     else
-      Qry.ParamByName('UPDATED_BY').AsString := 'OPERATOR';
+      Qry.ParamByName('UPDATED_BY').AsString := GetCurrentAppUser;
 
     Qry.ParamByName('ID').AsInteger := ADie.ID;
     Qry.ParamByName('ORIG_VER').AsInteger := ADie.Version;
@@ -1581,7 +1611,7 @@ begin
 
     if Result then
     begin
-      Audit := TDieAuditEntry.CreateEntry(ADie.ID, 'UPDATE', 'Die tooling specifications updated', ADie.UpdatedBy);
+      Audit := TDieAuditEntry.CreateEntry(ADie.ID, 'UPDATE', 'Die tooling specifications updated', ADie.UpdatedBy, ADie.SerialNo);
       Audit.OverrideReason := ADie.OverrideReason;
       AddAuditEntry(Audit);
     end;
@@ -1669,6 +1699,7 @@ function TDieRepository.PermanentlyDelete(const AID: Integer): Boolean;
 var
   Qry: TFDQuery;
   Conn: TFDConnection;
+  SerialNo: string;
 begin
   Result := False;
   Conn := GetConn;
@@ -1677,6 +1708,30 @@ begin
   try
     Qry := CreateQuery;
     try
+      // 1. Fetch serial number before deleting die
+      SerialNo := '';
+      Qry.SQL.Text := 'SELECT SERIAL_NO FROM DIE WHERE ID = :ID';
+      Qry.ParamByName('ID').AsInteger := AID;
+      Qry.Open;
+      if not Qry.IsEmpty then
+        SerialNo := Qry.FieldByName('SERIAL_NO').AsString;
+      Qry.Close;
+
+      // 2. Write one new audit row recording the permanent delete action, serial number, and DIE_ID.
+      // Truncate any text safely to the column limits (500 chars for DETAILS, 50 chars for CHANGED_BY).
+      Qry.SQL.Text :=
+        'INSERT INTO DIE_AUDIT_LOG (DIE_ID, DIE_SERIAL_NO, ACTION, CHANGED_BY, DETAILS, CHANGED_AT) ' +
+        'VALUES (:DIE_ID, :SERIAL_NO, ''PERMANENT_DELETE'', :CHANGED_BY, :DETAILS, CURRENT_TIMESTAMP)';
+      Qry.ParamByName('DIE_ID').AsInteger := AID;
+      if SerialNo <> '' then
+        Qry.ParamByName('SERIAL_NO').AsString := SerialNo
+      else
+        Qry.ParamByName('SERIAL_NO').Clear;
+      Qry.ParamByName('CHANGED_BY').AsString := Copy(GetCurrentAppUser, 1, 50);
+      Qry.ParamByName('DETAILS').AsString := Copy('Die ID ' + IntToStr(AID) + ' (Serial: ' + SerialNo + ') permanently deleted', 1, 500);
+      Qry.ExecSQL;
+
+      // 3. Delete from DIE table (FK was dropped in V007; previous audit rows remain completely untouched with original DIE_ID)
       Qry.SQL.Text := 'DELETE FROM DIE WHERE ID = :ID';
       Qry.ParamByName('ID').AsInteger := AID;
       Qry.ExecSQL;
@@ -1702,18 +1757,25 @@ var
   Qry: TFDQuery;
   OldStatus: string;
   OldVersion: Integer;
+  SerialNo: string;
   Audit: TDieAuditEntry;
   Conn: TFDConnection;
+  EffectiveUser: string;
 begin
   Result := False;
+  EffectiveUser := Trim(AUser);
+  if (EffectiveUser = '') or SameText(EffectiveUser, 'OPERATOR') then
+    EffectiveUser := GetCurrentAppUser;
+
   Conn := GetConn;
   if not Conn.InTransaction then
     Conn.StartTransaction;
   try
     Qry := CreateQuery;
     try
-      // 1. Fetch current status and version
-      Qry.SQL.Text := 'SELECT STATUS_CODE, VERSION FROM DIE WHERE ID = :ID';
+      // 1. Fetch current status, version, and serial number
+      SerialNo := '';
+      Qry.SQL.Text := 'SELECT STATUS_CODE, VERSION, SERIAL_NO FROM DIE WHERE ID = :ID';
       Qry.ParamByName('ID').AsInteger := AID;
       Qry.Open;
       if Qry.IsEmpty then
@@ -1723,6 +1785,7 @@ begin
       end;
       OldStatus := Qry.FieldByName('STATUS_CODE').AsString;
       OldVersion := Qry.FieldByName('VERSION').AsInteger;
+      SerialNo := Qry.FieldByName('SERIAL_NO').AsString;
       Qry.Close;
 
       if (AExpectedVersion > 0) and (OldVersion <> AExpectedVersion) then
@@ -1747,7 +1810,7 @@ begin
         '  UPDATED_AT = CURRENT_TIMESTAMP, ' +
         '  VERSION = VERSION + 1 ' +
         'WHERE ID = :ID AND VERSION = :EXP_VER';
-      Qry.ParamByName('USER').AsString := Trim(AUser);
+      Qry.ParamByName('USER').AsString := EffectiveUser;
       Qry.ParamByName('ID').AsInteger := AID;
       Qry.ParamByName('EXP_VER').AsInteger := OldVersion;
       Qry.ExecSQL;
@@ -1761,7 +1824,7 @@ begin
       end;
 
       // 3. Record audit entry
-      Audit := TDieAuditEntry.CreateEntry(AID, 'ARCHIVE', 'Tooling archived: ' + AReason, AUser);
+      Audit := TDieAuditEntry.CreateEntry(AID, 'ARCHIVE', 'Tooling archived: ' + AReason, EffectiveUser, SerialNo);
       Audit.FieldName := 'STATUS_CODE';
       Audit.OldValue := OldStatus;
       Audit.NewValue := 'ARCHIVED';
@@ -1789,18 +1852,25 @@ var
   Qry: TFDQuery;
   OldStatus: string;
   OldVersion: Integer;
+  SerialNo: string;
   Audit: TDieAuditEntry;
   Conn: TFDConnection;
+  EffectiveUser: string;
 begin
   Result := False;
+  EffectiveUser := Trim(AUser);
+  if (EffectiveUser = '') or SameText(EffectiveUser, 'OPERATOR') then
+    EffectiveUser := GetCurrentAppUser;
+
   Conn := GetConn;
   if not Conn.InTransaction then
     Conn.StartTransaction;
   try
     Qry := CreateQuery;
     try
-      // 1. Fetch current status and version
-      Qry.SQL.Text := 'SELECT STATUS_CODE, VERSION FROM DIE WHERE ID = :ID';
+      // 1. Fetch current status, version, and serial number
+      SerialNo := '';
+      Qry.SQL.Text := 'SELECT STATUS_CODE, VERSION, SERIAL_NO FROM DIE WHERE ID = :ID';
       Qry.ParamByName('ID').AsInteger := AID;
       Qry.Open;
       if Qry.IsEmpty then
@@ -1810,6 +1880,7 @@ begin
       end;
       OldStatus := Qry.FieldByName('STATUS_CODE').AsString;
       OldVersion := Qry.FieldByName('VERSION').AsInteger;
+      SerialNo := Qry.FieldByName('SERIAL_NO').AsString;
       Qry.Close;
 
       if (AExpectedVersion > 0) and (OldVersion <> AExpectedVersion) then
@@ -1834,7 +1905,7 @@ begin
         '  UPDATED_AT = CURRENT_TIMESTAMP, ' +
         '  VERSION = VERSION + 1 ' +
         'WHERE ID = :ID AND VERSION = :EXP_VER';
-      Qry.ParamByName('USER').AsString := Trim(AUser);
+      Qry.ParamByName('USER').AsString := EffectiveUser;
       Qry.ParamByName('ID').AsInteger := AID;
       Qry.ParamByName('EXP_VER').AsInteger := OldVersion;
       Qry.ExecSQL;
@@ -1849,9 +1920,9 @@ begin
 
       // 3. Record audit entry
       if Trim(AReason) <> '' then
-        Audit := TDieAuditEntry.CreateEntry(AID, 'RESTORE', 'Tooling restored: ' + AReason, AUser)
+        Audit := TDieAuditEntry.CreateEntry(AID, 'RESTORE', 'Tooling restored: ' + AReason, EffectiveUser, SerialNo)
       else
-        Audit := TDieAuditEntry.CreateEntry(AID, 'RESTORE', 'Tooling restored to active register', AUser);
+        Audit := TDieAuditEntry.CreateEntry(AID, 'RESTORE', 'Tooling restored to active register', EffectiveUser, SerialNo);
       Audit.FieldName := 'STATUS_CODE';
       Audit.OldValue := 'ARCHIVED';
       Audit.NewValue := 'ACTIVE';
@@ -1899,18 +1970,26 @@ function TDieRepository.ChangeStatus(
 var
   Qry: TFDQuery;
   OldStatus: string;
+  SerialNo: string;
   Audit: TDieAuditEntry;
+  EffectiveUser: string;
 begin
   Result := False;
+  EffectiveUser := Trim(AUser);
+  if (EffectiveUser = '') or SameText(EffectiveUser, 'OPERATOR') then
+    EffectiveUser := GetCurrentAppUser;
+
   Qry := CreateQuery;
   try
-    // 1. Get old status
-    Qry.SQL.Text := 'SELECT STATUS_CODE FROM DIE WHERE ID = :ID';
+    // 1. Get old status and serial number
+    SerialNo := '';
+    Qry.SQL.Text := 'SELECT STATUS_CODE, SERIAL_NO FROM DIE WHERE ID = :ID';
     Qry.ParamByName('ID').AsInteger := AID;
     Qry.Open;
     if Qry.IsEmpty then
       Exit;
-    OldStatus := Qry.Fields[0].AsString;
+    OldStatus := Qry.FieldByName('STATUS_CODE').AsString;
+    SerialNo := Qry.FieldByName('SERIAL_NO').AsString;
     Qry.Close;
 
     // 2. Update status
@@ -1922,14 +2001,14 @@ begin
       '  VERSION = VERSION + 1 ' +
       'WHERE ID = :ID';
     Qry.ParamByName('NEW_STATUS').AsString := Trim(ANewStatusCode);
-    Qry.ParamByName('USER').AsString := Trim(AUser);
+    Qry.ParamByName('USER').AsString := EffectiveUser;
     Qry.ParamByName('ID').AsInteger := AID;
     Qry.ExecSQL;
     Result := (Qry.RowsAffected > 0);
 
     if Result then
     begin
-      Audit := TDieAuditEntry.CreateEntry(AID, 'STATUS_CHANGE', 'Status changed from ' + OldStatus + ' to ' + ANewStatusCode, AUser);
+      Audit := TDieAuditEntry.CreateEntry(AID, 'STATUS_CHANGE', 'Status changed from ' + OldStatus + ' to ' + ANewStatusCode, EffectiveUser, SerialNo);
       Audit.FieldName := 'STATUS_CODE';
       Audit.OldValue := OldStatus;
       Audit.NewValue := ANewStatusCode;
@@ -1949,17 +2028,27 @@ var
   Qry: TFDQuery;
   OldLoc: string;
   NewLoc: string;
+  SerialNo: string;
   Audit: TDieAuditEntry;
+  EffectiveUser: string;
 begin
   Result := False;
+  EffectiveUser := Trim(AUser);
+  if (EffectiveUser = '') or SameText(EffectiveUser, 'OPERATOR') then
+    EffectiveUser := GetCurrentAppUser;
+
   NewLoc := Format('Rack %s, Shelf %s, Bin %s', [Trim(ARack), Trim(AShelf), Trim(ABin)]);
   Qry := CreateQuery;
   try
-    Qry.SQL.Text := 'SELECT STORAGE_LOCATION FROM DIE WHERE ID = :ID';
+    SerialNo := '';
+    Qry.SQL.Text := 'SELECT STORAGE_LOCATION, SERIAL_NO FROM DIE WHERE ID = :ID';
     Qry.ParamByName('ID').AsInteger := AID;
     Qry.Open;
     if not Qry.IsEmpty then
-      OldLoc := Qry.Fields[0].AsString
+    begin
+      OldLoc := Qry.FieldByName('STORAGE_LOCATION').AsString;
+      SerialNo := Qry.FieldByName('SERIAL_NO').AsString;
+    end
     else
       OldLoc := '';
     Qry.Close;
@@ -1978,14 +2067,14 @@ begin
     Qry.ParamByName('SHELF').AsString := Trim(AShelf);
     Qry.ParamByName('BIN').AsString := Trim(ABin);
     Qry.ParamByName('LOC').AsString := NewLoc;
-    Qry.ParamByName('USER').AsString := Trim(AUser);
+    Qry.ParamByName('USER').AsString := EffectiveUser;
     Qry.ParamByName('ID').AsInteger := AID;
     Qry.ExecSQL;
     Result := (Qry.RowsAffected > 0);
 
     if Result then
     begin
-      Audit := TDieAuditEntry.CreateEntry(AID, 'LOCATION_CHANGE', 'Storage location moved to ' + NewLoc, AUser);
+      Audit := TDieAuditEntry.CreateEntry(AID, 'LOCATION_CHANGE', 'Storage location moved to ' + NewLoc, EffectiveUser, SerialNo);
       Audit.FieldName := 'STORAGE_LOCATION';
       Audit.OldValue := OldLoc;
       Audit.NewValue := NewLoc;
@@ -2068,19 +2157,54 @@ function TDieRepository.GetAuditLog(const ADieID: Integer): TList<TDieAuditEntry
 var
   Qry: TFDQuery;
   Entry: TDieAuditEntry;
+  Serial: string;
+  Det: string;
+  P, P2: Integer;
+  S: string;
 begin
   Result := TList<TDieAuditEntry>.Create;
   Qry := CreateQuery;
   try
     Qry.SQL.Text :=
-      'SELECT * FROM DIE_AUDIT_LOG WHERE DIE_ID = :ID ORDER BY CHANGED_AT DESC, ID DESC';
+      'SELECT A.*, D.SERIAL_NO AS DIE_TABLE_SERIAL_NO ' +
+      'FROM DIE_AUDIT_LOG A ' +
+      'LEFT JOIN DIE D ON D.ID = A.DIE_ID ' +
+      'WHERE A.DIE_ID = :ID ORDER BY A.CHANGED_AT DESC, A.ID DESC';
     Qry.ParamByName('ID').AsInteger := ADieID;
     Qry.Open;
     while not Qry.Eof do
     begin
-      FillChar(Entry, SizeOf(Entry), 0);
+      Entry := Default(TDieAuditEntry);
       Entry.ID := Qry.FieldByName('ID').AsInteger;
       Entry.DieID := Qry.FieldByName('DIE_ID').AsInteger;
+
+      // Primary: read dedicated DIE_SERIAL_NO column directly
+      Serial := Qry.FieldByName('DIE_SERIAL_NO').AsString;
+      if Serial = '' then
+        Serial := Qry.FieldByName('DIE_TABLE_SERIAL_NO').AsString;
+      if Serial = '' then
+      begin
+        // Legacy fallback: parse DETAILS for old rows created before V008 with no DIE_SERIAL_NO
+        Det := Qry.FieldByName('DETAILS').AsString;
+        P := Pos('Serial: ', Det);
+        if P > 0 then
+        begin
+          S := Copy(Det, P + 8, MaxInt);
+          P2 := Pos(')', S);
+          if P2 > 0 then
+            Serial := Trim(Copy(S, 1, P2 - 1))
+          else
+          begin
+            P2 := Pos(' ', S);
+            if P2 > 0 then
+              Serial := Trim(Copy(S, 1, P2 - 1))
+            else
+              Serial := Trim(S);
+          end;
+        end;
+      end;
+      Entry.SerialNumber := Serial;
+
       Entry.Action := Qry.FieldByName('ACTION').AsString;
       Entry.FieldName := Qry.FieldByName('FIELD_NAME').AsString;
       Entry.OldValue := Qry.FieldByName('OLD_VALUE').AsString;
@@ -2100,26 +2224,42 @@ end;
 function TDieRepository.AddAuditEntry(const AEntry: TDieAuditEntry): Boolean;
 var
   Qry: TFDQuery;
+  ResolvedSerial: string;
 begin
   Qry := CreateQuery;
   try
+    ResolvedSerial := Trim(AEntry.SerialNumber);
+    if (ResolvedSerial = '') and (AEntry.DieID > 0) then
+    begin
+      Qry.SQL.Text := 'SELECT SERIAL_NO FROM DIE WHERE ID = :ID';
+      Qry.ParamByName('ID').AsInteger := AEntry.DieID;
+      Qry.Open;
+      if not Qry.IsEmpty then
+        ResolvedSerial := Qry.Fields[0].AsString;
+      Qry.Close;
+    end;
+
     Qry.SQL.Text :=
       'INSERT INTO DIE_AUDIT_LOG (' +
-      '  DIE_ID, ACTION, FIELD_NAME, OLD_VALUE, NEW_VALUE, OVERRIDE_REASON, DETAILS, CHANGED_BY, CHANGED_AT' +
+      '  DIE_ID, DIE_SERIAL_NO, ACTION, FIELD_NAME, OLD_VALUE, NEW_VALUE, OVERRIDE_REASON, DETAILS, CHANGED_BY, CHANGED_AT' +
       ') VALUES (' +
-      '  :DIE_ID, :ACTION, :FIELD_NAME, :OLD_VALUE, :NEW_VALUE, :OVERRIDE_REASON, :DETAILS, :CHANGED_BY, CURRENT_TIMESTAMP' +
+      '  :DIE_ID, :SERIAL_NO, :ACTION, :FIELD_NAME, :OLD_VALUE, :NEW_VALUE, :OVERRIDE_REASON, :DETAILS, :CHANGED_BY, CURRENT_TIMESTAMP' +
       ')';
     Qry.ParamByName('DIE_ID').AsInteger := AEntry.DieID;
+    if ResolvedSerial <> '' then
+      Qry.ParamByName('SERIAL_NO').AsString := ResolvedSerial
+    else
+      Qry.ParamByName('SERIAL_NO').Clear;
     Qry.ParamByName('ACTION').AsString := Trim(AEntry.Action);
     Qry.ParamByName('FIELD_NAME').AsString := Trim(AEntry.FieldName);
     Qry.ParamByName('OLD_VALUE').AsString := Trim(AEntry.OldValue);
     Qry.ParamByName('NEW_VALUE').AsString := Trim(AEntry.NewValue);
     Qry.ParamByName('OVERRIDE_REASON').AsString := Trim(AEntry.OverrideReason);
     Qry.ParamByName('DETAILS').AsString := Trim(AEntry.Details);
-    if Trim(AEntry.ChangedBy) <> '' then
+    if (Trim(AEntry.ChangedBy) <> '') and not SameText(Trim(AEntry.ChangedBy), 'OPERATOR') then
       Qry.ParamByName('CHANGED_BY').AsString := Trim(AEntry.ChangedBy)
     else
-      Qry.ParamByName('CHANGED_BY').AsString := 'OPERATOR';
+      Qry.ParamByName('CHANGED_BY').AsString := GetCurrentAppUser;
 
     Qry.ExecSQL;
     Result := True;
@@ -2242,25 +2382,25 @@ begin
         begin
           MatchClass := sdmExactMatch;
           MatchClassName := '1. Exact Dimension Match';
-          ReusabilityNote := 'Exact label size match. Geometrical match only — verify web layout, machine clearance & cavity gap before production.';
+          ReusabilityNote := 'Exact label size match. Geometrical match only - verify web layout, machine clearance & cavity gap before production.';
         end
         else if (AbsAroundUm <= 1000) and (AbsAcrossUm <= 1000) then
         begin
           MatchClass := sdmNearMatchTier1;
-          MatchClassName := '2. Near Match (Within ±1.0mm)';
-          ReusabilityNote := 'Near label size within ±1.0mm. Geometrical candidate — customer artwork & dimensional approval required.';
+          MatchClassName := '2. Near Match (Within '#177'1.0mm)';
+          ReusabilityNote := 'Near label size within '#177'1.0mm. Geometrical candidate - customer artwork & dimensional approval required.';
         end
         else if (AbsAroundUm <= TolUm) and (AbsAcrossUm <= TolUm) then
         begin
           MatchClass := sdmNearMatchTier2;
-          MatchClassName := Format('3. Near Match (Within ±%0.1fmm)', [AFilter.ToleranceMm]);
-          ReusabilityNote := Format('Near dimensions within ±%0.1fmm tolerance. Customer dimensional approval & keyline sign-off required.', [AFilter.ToleranceMm]);
+          MatchClassName := Format('3. Near Match (Within '#177'%0.1fmm)', [AFilter.ToleranceMm]);
+          ReusabilityNote := Format('Near dimensions within '#177'%0.1fmm tolerance. Customer dimensional approval & keyline sign-off required.', [AFilter.ToleranceMm]);
         end
         else if AFilter.IncludeSlitting and (DieAcrossUm >= TargetAcrossUm) then
         begin
           MatchClass := sdmSlittingCandidate;
           MatchClassName := '4. Slitting Candidate (Review Required)';
-          ReusabilityNote := 'Across width or lane count differs — REVIEW REQUIRED: A larger Across Size is not sufficient proof of compatibility; inspect actual lane and cut geometry before marking reusable.';
+          ReusabilityNote := 'Across width or lane count differs - REVIEW REQUIRED: A larger Across Size is not sufficient proof of compatibility; inspect actual lane and cut geometry before marking reusable.';
         end
         else
           MatchClass := sdmExcluded;
@@ -2325,6 +2465,1004 @@ begin
 
   finally
     Candidates.Free;
+    Qry.Free;
+  end;
+end;
+
+{ TFlatbedDieRepository }
+
+function TFlatbedDieRepository.MapFromQuery(Qry: TFDQuery): TFlatbedDie;
+begin
+  FillChar(Result, SizeOf(Result), 0);
+  Result.ID := Qry.FieldByName('ID').AsInteger;
+  Result.SerialNo := Qry.FieldByName('SERIAL_NO').AsString;
+  Result.Description := Qry.FieldByName('DESCRIPTION').AsString;
+  Result.Category := Qry.FieldByName('CATEGORY').AsString;
+  Result.CustomerID := Qry.FieldByName('CUSTOMER_ID').AsInteger;
+  Result.CustomerName := Qry.FieldByName('CUSTOMER_NAME').AsString;
+  Result.MediaID := Qry.FieldByName('MEDIA_ID').AsInteger;
+  Result.MediaName := Qry.FieldByName('MEDIA_NAME').AsString;
+  Result.CustomerRef := Qry.FieldByName('CUSTOMER_REF').AsString;
+  Result.SupplierRef := Qry.FieldByName('SUPPLIER_REF').AsString;
+  Result.InternalRef := Qry.FieldByName('INTERNAL_REF').AsString;
+  Result.AroundSizeMm := Qry.FieldByName('AROUND_SIZE_MM').AsFloat;
+  Result.AcrossSizeMm := Qry.FieldByName('ACROSS_SIZE_MM').AsFloat;
+  Result.AroundUps := Qry.FieldByName('AROUND_UPS').AsInteger;
+  Result.AcrossUps := Qry.FieldByName('ACROSS_UPS').AsInteger;
+  Result.TotalUps := Qry.FieldByName('TOTAL_UPS').AsInteger;
+  Result.AroundGapMm := Qry.FieldByName('AROUND_GAP_MM').AsFloat;
+  Result.AcrossGapMm := Qry.FieldByName('ACROSS_GAP_MM').AsFloat;
+  Result.CornerRadiusMm := Qry.FieldByName('CORNER_RADIUS_MM').AsFloat;
+  Result.Shape := Qry.FieldByName('SHAPE').AsString;
+  Result.PlateWidthMm := Qry.FieldByName('PLATE_WIDTH_MM').AsFloat;
+  Result.PlateLengthMm := Qry.FieldByName('PLATE_LENGTH_MM').AsFloat;
+  Result.MaxFeedStrokeMm := Qry.FieldByName('MAX_FEED_STROKE_MM').AsFloat;
+  Result.TotalCutAroundMm := Qry.FieldByName('TOTAL_CUT_AROUND_MM').AsFloat;
+  Result.TotalCutAcrossMm := Qry.FieldByName('TOTAL_CUT_ACROSS_MM').AsFloat;
+  Result.CanRotate := (Qry.FieldByName('CAN_ROTATE').AsInteger = 1);
+  Result.RotationSupport := Qry.FieldByName('ROTATION_SUPPORT').AsString;
+  Result.StorageLocation := Qry.FieldByName('STORAGE_LOCATION').AsString;
+  Result.StorageRack := Qry.FieldByName('STORAGE_RACK').AsString;
+  Result.StorageShelf := Qry.FieldByName('STORAGE_SHELF').AsString;
+  Result.StorageBin := Qry.FieldByName('STORAGE_BIN').AsString;
+  Result.StatusCode := Qry.FieldByName('STATUS_CODE').AsString;
+  Result.StatusName := Qry.FieldByName('STATUS_NAME').AsString;
+  Result.BadgeColor := Qry.FieldByName('BADGE_COLOR').AsString;
+
+  if not Qry.FieldByName('PURCHASE_DATE').IsNull then
+    Result.PurchaseDate := Qry.FieldByName('PURCHASE_DATE').AsDateTime
+  else
+    Result.PurchaseDate := 0;
+
+  if not Qry.FieldByName('RECEIVED_DATE').IsNull then
+    Result.ReceivedDate := Qry.FieldByName('RECEIVED_DATE').AsDateTime
+  else
+    Result.ReceivedDate := 0;
+
+  Result.DieMaker := Qry.FieldByName('DIE_MAKER').AsString;
+  Result.TotalImpressions := Qry.FieldByName('TOTAL_IMPRESSIONS').AsInteger;
+  Result.Notes := Qry.FieldByName('NOTES').AsString;
+  Result.Version := Qry.FieldByName('VERSION').AsInteger;
+  Result.CreatedBy := Qry.FieldByName('CREATED_BY').AsString;
+  Result.CreatedAt := Qry.FieldByName('CREATED_AT').AsDateTime;
+  Result.UpdatedBy := Qry.FieldByName('UPDATED_BY').AsString;
+  Result.UpdatedAt := Qry.FieldByName('UPDATED_AT').AsDateTime;
+end;
+
+function TFlatbedDieRepository.GetAll: TList<TFlatbedDie>;
+var
+  Qry: TFDQuery;
+begin
+  Result := TList<TFlatbedDie>.Create;
+  Qry := CreateQuery;
+  try
+    Qry.SQL.Text := 'SELECT * FROM V_FLATBED_DIE_CATALOG ORDER BY SERIAL_NO ASC';
+    Qry.Open;
+    while not Qry.Eof do
+    begin
+      Result.Add(MapFromQuery(Qry));
+      Qry.Next;
+    end;
+  finally
+    Qry.Free;
+  end;
+end;
+
+function TFlatbedDieRepository.GetByID(const AID: Integer): TFlatbedDie;
+var
+  Qry: TFDQuery;
+begin
+  FillChar(Result, SizeOf(Result), 0);
+  Qry := CreateQuery;
+  try
+    Qry.SQL.Text := 'SELECT * FROM V_FLATBED_DIE_CATALOG WHERE ID = :ID';
+    Qry.ParamByName('ID').AsInteger := AID;
+    Qry.Open;
+    if not Qry.IsEmpty then
+      Result := MapFromQuery(Qry);
+  finally
+    Qry.Free;
+  end;
+end;
+
+function TFlatbedDieRepository.GetBySerial(const ASerialNo: string): TFlatbedDie;
+var
+  Qry: TFDQuery;
+begin
+  FillChar(Result, SizeOf(Result), 0);
+  Qry := CreateQuery;
+  try
+    Qry.SQL.Text := 'SELECT * FROM V_FLATBED_DIE_CATALOG WHERE UPPER(SERIAL_NO) = :S';
+    Qry.ParamByName('S').AsString := UpperCase(Trim(ASerialNo));
+    Qry.Open;
+    if not Qry.IsEmpty then
+      Result := MapFromQuery(Qry);
+  finally
+    Qry.Free;
+  end;
+end;
+
+function TFlatbedDieRepository.Search(const AFilter: TFlatbedDieSearchFilter): TList<TFlatbedDie>;
+var
+  Qry: TFDQuery;
+  Sql: string;
+  Die: TFlatbedDie;
+  Rotated: Boolean;
+begin
+  Result := TList<TFlatbedDie>.Create;
+  Qry := CreateQuery;
+  try
+    Sql := 'SELECT * FROM V_FLATBED_DIE_CATALOG WHERE 1=1 ';
+
+    if Trim(AFilter.SearchText) <> '' then
+    begin
+      Sql := Sql +
+        ' AND (UPPER(SERIAL_NO) LIKE :ST ' +
+        '  OR UPPER(DESCRIPTION) LIKE :ST ' +
+        '  OR UPPER(CUSTOMER_REF) LIKE :ST ' +
+        '  OR UPPER(CUSTOMER_NAME) LIKE :ST ' +
+        '  OR UPPER(INTERNAL_REF) LIKE :ST) ';
+    end;
+
+    if Trim(AFilter.Category) <> '' then
+      Sql := Sql + ' AND (CATEGORY = :CAT) ';
+
+    if AFilter.CustomerID > 0 then
+      Sql := Sql + ' AND (CUSTOMER_ID = :CUSTID) ';
+
+    if AFilter.MediaID > 0 then
+      Sql := Sql + ' AND (MEDIA_ID = :MEDIAID) ';
+
+    if Trim(AFilter.StatusCode) <> '' then
+      Sql := Sql + ' AND (STATUS_CODE = :STATUS) ';
+
+    if Trim(AFilter.Shape) <> '' then
+      Sql := Sql + ' AND (SHAPE = :SHAPE) ';
+
+    if Trim(AFilter.StorageLocation) <> '' then
+    begin
+      Sql := Sql +
+        ' AND (UPPER(STORAGE_LOCATION) LIKE :LOC ' +
+        '  OR UPPER(STORAGE_RACK) LIKE :LOC ' +
+        '  OR UPPER(STORAGE_SHELF) LIKE :LOC ' +
+        '  OR UPPER(STORAGE_BIN) LIKE :LOC) ';
+    end;
+
+    if AFilter.ActiveOnly then
+      Sql := Sql + ' AND (STATUS_CODE IN (''ACTIVE'', ''AVAILABLE'', ''IN_USE'')) '
+    else if Trim(AFilter.StatusCode) <> '' then
+      Sql := Sql + ' AND (STATUS_CODE = :STATUS) '
+    else if not AFilter.IncludeArchived then
+      Sql := Sql + ' AND (STATUS_CODE <> ''ARCHIVED'') ';
+
+    Sql := Sql + ' ORDER BY SERIAL_NO ASC';
+
+    Qry.SQL.Text := Sql;
+
+    if Trim(AFilter.SearchText) <> '' then
+      Qry.ParamByName('ST').AsString := '%' + UpperCase(Trim(AFilter.SearchText)) + '%';
+    if Trim(AFilter.Category) <> '' then
+      Qry.ParamByName('CAT').AsString := Trim(AFilter.Category);
+    if AFilter.CustomerID > 0 then
+      Qry.ParamByName('CUSTID').AsInteger := AFilter.CustomerID;
+    if AFilter.MediaID > 0 then
+      Qry.ParamByName('MEDIAID').AsInteger := AFilter.MediaID;
+    if Trim(AFilter.StatusCode) <> '' then
+      Qry.ParamByName('STATUS').AsString := Trim(AFilter.StatusCode);
+    if Trim(AFilter.Shape) <> '' then
+      Qry.ParamByName('SHAPE').AsString := Trim(AFilter.Shape);
+    if Trim(AFilter.StorageLocation) <> '' then
+      Qry.ParamByName('LOC').AsString := '%' + UpperCase(Trim(AFilter.StorageLocation)) + '%';
+
+    Qry.Open;
+    while not Qry.Eof do
+    begin
+      Die := MapFromQuery(Qry);
+      if AFilter.MatchDimensions and (AFilter.TargetAroundMm > 0) and (AFilter.TargetAcrossMm > 0) then
+      begin
+        if MatchesFlatbedDimensions(Die.AroundSizeMm, Die.AcrossSizeMm,
+             AFilter.TargetAroundMm, AFilter.TargetAcrossMm,
+             AFilter.AllowRotation and Die.CanRotate, Rotated, AFilter.ToleranceMm) then
+          Result.Add(Die);
+      end
+      else
+        Result.Add(Die);
+
+      Qry.Next;
+    end;
+  finally
+    Qry.Free;
+  end;
+end;
+
+function TFlatbedDieRepository.SearchMatchingDimensions(
+  const ATargetAroundMm, ATargetAcrossMm: Double;
+  const ACategory: string;
+  const AToleranceMm: Double;
+  const AAllowRotation: Boolean;
+  const AActiveOnly: Boolean
+): TList<TFlatbedDieSearchResult>;
+var
+  Qry: TFDQuery;
+  Sql: string;
+  Die: TFlatbedDie;
+  Rotated: Boolean;
+  Match: TFlatbedDieSearchResult;
+begin
+  Result := TList<TFlatbedDieSearchResult>.Create;
+  Qry := CreateQuery;
+  try
+    Sql := 'SELECT * FROM V_FLATBED_DIE_CATALOG WHERE 1=1 ';
+    if Trim(ACategory) <> '' then
+      Sql := Sql + ' AND (CATEGORY = :CAT) ';
+    if AActiveOnly then
+      Sql := Sql + ' AND (STATUS_CODE IN (''ACTIVE'', ''AVAILABLE'', ''IN_USE'')) '
+    else
+      Sql := Sql + ' AND (STATUS_CODE <> ''ARCHIVED'') ';
+
+    Sql := Sql + ' ORDER BY SERIAL_NO ASC';
+    Qry.SQL.Text := Sql;
+    if Trim(ACategory) <> '' then
+      Qry.ParamByName('CAT').AsString := Trim(ACategory);
+    Qry.Open;
+
+    while not Qry.Eof do
+    begin
+      Die := MapFromQuery(Qry);
+      if MatchesFlatbedDimensions(Die.AroundSizeMm, Die.AcrossSizeMm,
+           ATargetAroundMm, ATargetAcrossMm,
+           AAllowRotation and Die.CanRotate, Rotated, AToleranceMm) then
+      begin
+        FillChar(Match, SizeOf(Match), 0);
+        Match.Die := Die;
+        Match.IsRotated := Rotated;
+        if Rotated then
+        begin
+          Match.AroundDiffMm := Die.AcrossSizeMm - ATargetAroundMm;
+          Match.AcrossDiffMm := Die.AroundSizeMm - ATargetAcrossMm;
+          Match.MatchNote := '90'#176' Bi-directional rotated fit';
+        end
+        else
+        begin
+          Match.AroundDiffMm := Die.AroundSizeMm - ATargetAroundMm;
+          Match.AcrossDiffMm := Die.AcrossSizeMm - ATargetAcrossMm;
+          Match.MatchNote := 'Standard orientation fit';
+        end;
+        Result.Add(Match);
+      end;
+      Qry.Next;
+    end;
+  finally
+    Qry.Free;
+  end;
+end;
+
+function TFlatbedDieRepository.Insert(var ADie: TFlatbedDie): Integer;
+var
+  Qry: TFDQuery;
+  Audit: TFlatbedDieAuditEntry;
+begin
+  Result := 0;
+  Qry := CreateQuery;
+  try
+    Qry.SQL.Text :=
+      'INSERT INTO FLATBED_DIE (' +
+      '  SERIAL_NO, DESCRIPTION, CATEGORY, CUSTOMER_ID, MEDIA_ID, ' +
+      '  CUSTOMER_REF, SUPPLIER_REF, INTERNAL_REF, ' +
+      '  AROUND_SIZE_MM, ACROSS_SIZE_MM, AROUND_UPS, ACROSS_UPS, ' +
+      '  AROUND_GAP_MM, ACROSS_GAP_MM, CORNER_RADIUS_MM, SHAPE, ' +
+      '  PLATE_WIDTH_MM, PLATE_LENGTH_MM, MAX_FEED_STROKE_MM, ' +
+      '  STORAGE_LOCATION, STORAGE_RACK, STORAGE_SHELF, STORAGE_BIN, ' +
+      '  STATUS_CODE, PURCHASE_DATE, RECEIVED_DATE, ' +
+      '  DIE_MAKER, TOTAL_IMPRESSIONS, NOTES, ' +
+      '  CREATED_BY, UPDATED_BY, VERSION' +
+      ') VALUES (' +
+      '  :SERIAL_NO, :DESCRIPTION, :CATEGORY, :CUSTOMER_ID, :MEDIA_ID, ' +
+      '  :CUSTOMER_REF, :SUPPLIER_REF, :INTERNAL_REF, ' +
+      '  :AROUND_SIZE_MM, :ACROSS_SIZE_MM, :AROUND_UPS, :ACROSS_UPS, ' +
+      '  :AROUND_GAP_MM, :ACROSS_GAP_MM, :CORNER_RADIUS_MM, :SHAPE, ' +
+      '  :PLATE_WIDTH_MM, :PLATE_LENGTH_MM, :MAX_FEED_STROKE_MM, ' +
+      '  :STORAGE_LOCATION, :STORAGE_RACK, :STORAGE_SHELF, :STORAGE_BIN, ' +
+      '  :STATUS_CODE, :PURCHASE_DATE, :RECEIVED_DATE, ' +
+      '  :DIE_MAKER, :TOTAL_IMPRESSIONS, :NOTES, ' +
+      '  :CREATED_BY, :UPDATED_BY, 1' +
+      ') RETURNING ID';
+
+    Qry.ParamByName('SERIAL_NO').AsString := Trim(ADie.SerialNo);
+    Qry.ParamByName('DESCRIPTION').AsString := Trim(ADie.Description);
+    if SameText(Trim(ADie.Category), 'ROLL_FORM') or SameText(Trim(ADie.Category), 'ROLLFORM') then
+      Qry.ParamByName('CATEGORY').AsString := 'ROLL_FORM'
+    else
+      Qry.ParamByName('CATEGORY').AsString := 'SHEET_FORM';
+
+    if ADie.CustomerID > 0 then
+      Qry.ParamByName('CUSTOMER_ID').AsInteger := ADie.CustomerID
+    else
+      Qry.ParamByName('CUSTOMER_ID').Clear;
+
+    if ADie.MediaID > 0 then
+      Qry.ParamByName('MEDIA_ID').AsInteger := ADie.MediaID
+    else
+      Qry.ParamByName('MEDIA_ID').Clear;
+
+    Qry.ParamByName('CUSTOMER_REF').AsString := Trim(ADie.CustomerRef);
+    Qry.ParamByName('SUPPLIER_REF').AsString := Trim(ADie.SupplierRef);
+    Qry.ParamByName('INTERNAL_REF').AsString := Trim(ADie.InternalRef);
+
+    Qry.ParamByName('AROUND_SIZE_MM').AsFloat := ADie.AroundSizeMm;
+    Qry.ParamByName('ACROSS_SIZE_MM').AsFloat := ADie.AcrossSizeMm;
+    Qry.ParamByName('AROUND_UPS').AsInteger := ADie.AroundUps;
+    Qry.ParamByName('ACROSS_UPS').AsInteger := ADie.AcrossUps;
+    Qry.ParamByName('AROUND_GAP_MM').AsFloat := ADie.AroundGapMm;
+    Qry.ParamByName('ACROSS_GAP_MM').AsFloat := ADie.AcrossGapMm;
+    Qry.ParamByName('CORNER_RADIUS_MM').AsFloat := ADie.CornerRadiusMm;
+    Qry.ParamByName('SHAPE').AsString := Trim(ADie.Shape);
+
+    if ADie.PlateWidthMm > 0 then
+      Qry.ParamByName('PLATE_WIDTH_MM').AsFloat := ADie.PlateWidthMm
+    else
+      Qry.ParamByName('PLATE_WIDTH_MM').Clear;
+
+    if ADie.PlateLengthMm > 0 then
+      Qry.ParamByName('PLATE_LENGTH_MM').AsFloat := ADie.PlateLengthMm
+    else
+      Qry.ParamByName('PLATE_LENGTH_MM').Clear;
+
+    if ADie.MaxFeedStrokeMm > 0 then
+      Qry.ParamByName('MAX_FEED_STROKE_MM').AsFloat := ADie.MaxFeedStrokeMm
+    else
+      Qry.ParamByName('MAX_FEED_STROKE_MM').Clear;
+
+    Qry.ParamByName('STORAGE_LOCATION').AsString := Trim(ADie.StorageLocation);
+    Qry.ParamByName('STORAGE_RACK').AsString := Trim(ADie.StorageRack);
+    Qry.ParamByName('STORAGE_SHELF').AsString := Trim(ADie.StorageShelf);
+    Qry.ParamByName('STORAGE_BIN').AsString := Trim(ADie.StorageBin);
+
+    if Trim(ADie.StatusCode) <> '' then
+      Qry.ParamByName('STATUS_CODE').AsString := Trim(ADie.StatusCode)
+    else
+      Qry.ParamByName('STATUS_CODE').AsString := 'ACTIVE';
+
+    if ADie.PurchaseDate > 0 then
+      Qry.ParamByName('PURCHASE_DATE').AsDate := Trunc(ADie.PurchaseDate)
+    else
+      Qry.ParamByName('PURCHASE_DATE').Clear;
+
+    if ADie.ReceivedDate > 0 then
+      Qry.ParamByName('RECEIVED_DATE').AsDate := Trunc(ADie.ReceivedDate)
+    else
+      Qry.ParamByName('RECEIVED_DATE').Clear;
+
+    Qry.ParamByName('DIE_MAKER').AsString := Trim(ADie.DieMaker);
+    Qry.ParamByName('TOTAL_IMPRESSIONS').AsInteger := ADie.TotalImpressions;
+    Qry.ParamByName('NOTES').AsString := Trim(ADie.Notes);
+
+    if (Trim(ADie.CreatedBy) <> '') and not SameText(Trim(ADie.CreatedBy), 'OPERATOR') then
+      Qry.ParamByName('CREATED_BY').AsString := Trim(ADie.CreatedBy)
+    else
+      Qry.ParamByName('CREATED_BY').AsString := GetCurrentAppUser;
+
+    if (Trim(ADie.UpdatedBy) <> '') and not SameText(Trim(ADie.UpdatedBy), 'OPERATOR') then
+      Qry.ParamByName('UPDATED_BY').AsString := Trim(ADie.UpdatedBy)
+    else
+      Qry.ParamByName('UPDATED_BY').AsString := GetCurrentAppUser;
+
+    Qry.Open;
+    Result := Qry.Fields[0].AsInteger;
+    ADie.ID := Result;
+    ADie.Version := 1;
+    Qry.Close;
+
+    Audit := TFlatbedDieAuditEntry.CreateEntry(Result, 'CREATE', 'Flatbed die tooling registered', ADie.CreatedBy, ADie.SerialNo);
+    AddAuditEntry(Audit);
+  finally
+    Qry.Free;
+  end;
+end;
+
+function TFlatbedDieRepository.Update(const ADie: TFlatbedDie): Boolean;
+var
+  Qry: TFDQuery;
+  Audit: TFlatbedDieAuditEntry;
+begin
+  Result := False;
+  Qry := CreateQuery;
+  try
+    Qry.SQL.Text :=
+      'UPDATE FLATBED_DIE SET ' +
+      '  SERIAL_NO = :SERIAL_NO, ' +
+      '  DESCRIPTION = :DESCRIPTION, ' +
+      '  CATEGORY = :CATEGORY, ' +
+      '  CUSTOMER_ID = :CUSTOMER_ID, ' +
+      '  MEDIA_ID = :MEDIA_ID, ' +
+      '  CUSTOMER_REF = :CUSTOMER_REF, ' +
+      '  SUPPLIER_REF = :SUPPLIER_REF, ' +
+      '  INTERNAL_REF = :INTERNAL_REF, ' +
+      '  AROUND_SIZE_MM = :AROUND_SIZE_MM, ' +
+      '  ACROSS_SIZE_MM = :ACROSS_SIZE_MM, ' +
+      '  AROUND_UPS = :AROUND_UPS, ' +
+      '  ACROSS_UPS = :ACROSS_UPS, ' +
+      '  AROUND_GAP_MM = :AROUND_GAP_MM, ' +
+      '  ACROSS_GAP_MM = :ACROSS_GAP_MM, ' +
+      '  CORNER_RADIUS_MM = :CORNER_RADIUS_MM, ' +
+      '  SHAPE = :SHAPE, ' +
+      '  PLATE_WIDTH_MM = :PLATE_WIDTH_MM, ' +
+      '  PLATE_LENGTH_MM = :PLATE_LENGTH_MM, ' +
+      '  MAX_FEED_STROKE_MM = :MAX_FEED_STROKE_MM, ' +
+      '  STORAGE_LOCATION = :STORAGE_LOCATION, ' +
+      '  STORAGE_RACK = :STORAGE_RACK, ' +
+      '  STORAGE_SHELF = :STORAGE_SHELF, ' +
+      '  STORAGE_BIN = :STORAGE_BIN, ' +
+      '  STATUS_CODE = :STATUS_CODE, ' +
+      '  PURCHASE_DATE = :PURCHASE_DATE, ' +
+      '  RECEIVED_DATE = :RECEIVED_DATE, ' +
+      '  DIE_MAKER = :DIE_MAKER, ' +
+      '  TOTAL_IMPRESSIONS = :TOTAL_IMPRESSIONS, ' +
+      '  NOTES = :NOTES, ' +
+      '  UPDATED_BY = :UPDATED_BY, ' +
+      '  UPDATED_AT = CURRENT_TIMESTAMP, ' +
+      '  VERSION = VERSION + 1 ' +
+      'WHERE ID = :ID AND VERSION = :ORIG_VER';
+
+    Qry.ParamByName('SERIAL_NO').AsString := Trim(ADie.SerialNo);
+    Qry.ParamByName('DESCRIPTION').AsString := Trim(ADie.Description);
+    if SameText(Trim(ADie.Category), 'ROLL_FORM') or SameText(Trim(ADie.Category), 'ROLLFORM') then
+      Qry.ParamByName('CATEGORY').AsString := 'ROLL_FORM'
+    else
+      Qry.ParamByName('CATEGORY').AsString := 'SHEET_FORM';
+
+    if ADie.CustomerID > 0 then
+      Qry.ParamByName('CUSTOMER_ID').AsInteger := ADie.CustomerID
+    else
+      Qry.ParamByName('CUSTOMER_ID').Clear;
+
+    if ADie.MediaID > 0 then
+      Qry.ParamByName('MEDIA_ID').AsInteger := ADie.MediaID
+    else
+      Qry.ParamByName('MEDIA_ID').Clear;
+
+    Qry.ParamByName('CUSTOMER_REF').AsString := Trim(ADie.CustomerRef);
+    Qry.ParamByName('SUPPLIER_REF').AsString := Trim(ADie.SupplierRef);
+    Qry.ParamByName('INTERNAL_REF').AsString := Trim(ADie.InternalRef);
+
+    Qry.ParamByName('AROUND_SIZE_MM').AsFloat := ADie.AroundSizeMm;
+    Qry.ParamByName('ACROSS_SIZE_MM').AsFloat := ADie.AcrossSizeMm;
+    Qry.ParamByName('AROUND_UPS').AsInteger := ADie.AroundUps;
+    Qry.ParamByName('ACROSS_UPS').AsInteger := ADie.AcrossUps;
+    Qry.ParamByName('AROUND_GAP_MM').AsFloat := ADie.AroundGapMm;
+    Qry.ParamByName('ACROSS_GAP_MM').AsFloat := ADie.AcrossGapMm;
+    Qry.ParamByName('CORNER_RADIUS_MM').AsFloat := ADie.CornerRadiusMm;
+    Qry.ParamByName('SHAPE').AsString := Trim(ADie.Shape);
+
+    if ADie.PlateWidthMm > 0 then
+      Qry.ParamByName('PLATE_WIDTH_MM').AsFloat := ADie.PlateWidthMm
+    else
+      Qry.ParamByName('PLATE_WIDTH_MM').Clear;
+
+    if ADie.PlateLengthMm > 0 then
+      Qry.ParamByName('PLATE_LENGTH_MM').AsFloat := ADie.PlateLengthMm
+    else
+      Qry.ParamByName('PLATE_LENGTH_MM').Clear;
+
+    if ADie.MaxFeedStrokeMm > 0 then
+      Qry.ParamByName('MAX_FEED_STROKE_MM').AsFloat := ADie.MaxFeedStrokeMm
+    else
+      Qry.ParamByName('MAX_FEED_STROKE_MM').Clear;
+
+    Qry.ParamByName('STORAGE_LOCATION').AsString := Trim(ADie.StorageLocation);
+    Qry.ParamByName('STORAGE_RACK').AsString := Trim(ADie.StorageRack);
+    Qry.ParamByName('STORAGE_SHELF').AsString := Trim(ADie.StorageShelf);
+    Qry.ParamByName('STORAGE_BIN').AsString := Trim(ADie.StorageBin);
+    Qry.ParamByName('STATUS_CODE').AsString := Trim(ADie.StatusCode);
+
+    if ADie.PurchaseDate > 0 then
+      Qry.ParamByName('PURCHASE_DATE').AsDate := Trunc(ADie.PurchaseDate)
+    else
+      Qry.ParamByName('PURCHASE_DATE').Clear;
+
+    if ADie.ReceivedDate > 0 then
+      Qry.ParamByName('RECEIVED_DATE').AsDate := Trunc(ADie.ReceivedDate)
+    else
+      Qry.ParamByName('RECEIVED_DATE').Clear;
+
+    Qry.ParamByName('DIE_MAKER').AsString := Trim(ADie.DieMaker);
+    Qry.ParamByName('TOTAL_IMPRESSIONS').AsInteger := ADie.TotalImpressions;
+    Qry.ParamByName('NOTES').AsString := Trim(ADie.Notes);
+
+    if (Trim(ADie.UpdatedBy) <> '') and not SameText(Trim(ADie.UpdatedBy), 'OPERATOR') then
+      Qry.ParamByName('UPDATED_BY').AsString := Trim(ADie.UpdatedBy)
+    else
+      Qry.ParamByName('UPDATED_BY').AsString := GetCurrentAppUser;
+
+    Qry.ParamByName('ID').AsInteger := ADie.ID;
+    Qry.ParamByName('ORIG_VER').AsInteger := ADie.Version;
+
+    Qry.ExecSQL;
+    Result := (Qry.RowsAffected > 0);
+
+    if Result then
+    begin
+      Audit := TFlatbedDieAuditEntry.CreateEntry(ADie.ID, 'UPDATE', 'Flatbed die specifications updated', ADie.UpdatedBy, ADie.SerialNo);
+      AddAuditEntry(Audit);
+    end;
+  finally
+    Qry.Free;
+  end;
+end;
+
+function TFlatbedDieRepository.Delete(const AID: Integer): Boolean;
+var
+  RefusalReason: string;
+begin
+  if not CanPermanentlyDelete(AID, RefusalReason) then
+    raise EDieVixValidationException.Create(
+      'Cannot delete flatbed die record: ' + RefusalReason + ' Use Archive operation instead.'
+    );
+  Result := PermanentlyDelete(AID);
+end;
+
+function TFlatbedDieRepository.CanPermanentlyDelete(const AID: Integer; out ARefusalReason: string): Boolean;
+var
+  Qry: TFDQuery;
+  Serial: string;
+  Impressions: Integer;
+begin
+  ARefusalReason := '';
+  Result := False;
+  Qry := CreateQuery;
+  try
+    Qry.SQL.Text := 'SELECT SERIAL_NO, COALESCE(TOTAL_IMPRESSIONS, 0) AS IMP FROM FLATBED_DIE WHERE ID = :ID';
+    Qry.ParamByName('ID').AsInteger := AID;
+    Qry.Open;
+    if Qry.IsEmpty then
+    begin
+      ARefusalReason := 'Flatbed die tooling record does not exist.';
+      Exit;
+    end;
+    Serial := Qry.FieldByName('SERIAL_NO').AsString;
+    Impressions := Qry.FieldByName('IMP').AsInteger;
+    Qry.Close;
+
+    if Impressions > 0 then
+    begin
+      ARefusalReason := Format(
+        'Flatbed die "%s" has %d recorded production impressions. Archiving is required to preserve production provenance.',
+        [Serial, Impressions]
+      );
+      Exit;
+    end;
+
+    Result := True;
+  finally
+    Qry.Free;
+  end;
+end;
+
+function TFlatbedDieRepository.PermanentlyDelete(const AID: Integer): Boolean;
+var
+  Qry: TFDQuery;
+  Conn: TFDConnection;
+  SerialNo: string;
+begin
+  Result := False;
+  Conn := GetConn;
+  if not Conn.InTransaction then
+    Conn.StartTransaction;
+  try
+    Qry := CreateQuery;
+    try
+      SerialNo := '';
+      Qry.SQL.Text := 'SELECT SERIAL_NO FROM FLATBED_DIE WHERE ID = :ID';
+      Qry.ParamByName('ID').AsInteger := AID;
+      Qry.Open;
+      if not Qry.IsEmpty then
+        SerialNo := Qry.FieldByName('SERIAL_NO').AsString;
+      Qry.Close;
+
+      Qry.SQL.Text :=
+        'INSERT INTO FLATBED_DIE_AUDIT_LOG (FLATBED_DIE_ID, DIE_SERIAL_NO, ACTION, CHANGED_BY, DETAILS, CHANGED_AT) ' +
+        'VALUES (:DIE_ID, :SERIAL_NO, ''PERMANENT_DELETE'', :CHANGED_BY, :DETAILS, CURRENT_TIMESTAMP)';
+      Qry.ParamByName('DIE_ID').AsInteger := AID;
+      if SerialNo <> '' then
+        Qry.ParamByName('SERIAL_NO').AsString := SerialNo
+      else
+        Qry.ParamByName('SERIAL_NO').Clear;
+      Qry.ParamByName('CHANGED_BY').AsString := Copy(GetCurrentAppUser, 1, 50);
+      Qry.ParamByName('DETAILS').AsString := Copy('Flatbed Die ID ' + IntToStr(AID) + ' (Serial: ' + SerialNo + ') permanently deleted', 1, 500);
+      Qry.ExecSQL;
+
+      Qry.SQL.Text := 'DELETE FROM FLATBED_DIE WHERE ID = :ID';
+      Qry.ParamByName('ID').AsInteger := AID;
+      Qry.ExecSQL;
+      Result := (Qry.RowsAffected > 0);
+
+      if Conn.InTransaction then
+        Conn.Commit;
+    finally
+      Qry.Free;
+    end;
+  except
+    on E: Exception do
+    begin
+      if Conn.InTransaction then
+        Conn.Rollback;
+      raise;
+    end;
+  end;
+end;
+
+function TFlatbedDieRepository.Archive(const AID: Integer; const AReason, AUser: string; const AExpectedVersion: Integer): Boolean;
+var
+  Qry: TFDQuery;
+  OldStatus: string;
+  OldVersion: Integer;
+  SerialNo: string;
+  Audit: TFlatbedDieAuditEntry;
+  Conn: TFDConnection;
+  EffectiveUser: string;
+begin
+  Result := False;
+  EffectiveUser := Trim(AUser);
+  if (EffectiveUser = '') or SameText(EffectiveUser, 'OPERATOR') then
+    EffectiveUser := GetCurrentAppUser;
+
+  Conn := GetConn;
+  if not Conn.InTransaction then
+    Conn.StartTransaction;
+  try
+    Qry := CreateQuery;
+    try
+      SerialNo := '';
+      Qry.SQL.Text := 'SELECT STATUS_CODE, VERSION, SERIAL_NO FROM FLATBED_DIE WHERE ID = :ID';
+      Qry.ParamByName('ID').AsInteger := AID;
+      Qry.Open;
+      if Qry.IsEmpty then
+      begin
+        if Conn.InTransaction then Conn.Rollback;
+        Exit;
+      end;
+      OldStatus := Qry.FieldByName('STATUS_CODE').AsString;
+      OldVersion := Qry.FieldByName('VERSION').AsInteger;
+      SerialNo := Qry.FieldByName('SERIAL_NO').AsString;
+      Qry.Close;
+
+      if (AExpectedVersion > 0) and (OldVersion <> AExpectedVersion) then
+      begin
+        if Conn.InTransaction then Conn.Rollback;
+        raise EDieVixConcurrencyException.Create(
+          'Concurrency conflict: The flatbed die record has been modified by another session. Please reload and review before archiving.'
+        );
+      end;
+
+      if SameText(OldStatus, 'ARCHIVED') then
+      begin
+        if Conn.InTransaction then Conn.Rollback;
+        Exit;
+      end;
+
+      Qry.SQL.Text :=
+        'UPDATE FLATBED_DIE SET ' +
+        '  STATUS_CODE = ''ARCHIVED'', ' +
+        '  UPDATED_BY = :USER, ' +
+        '  UPDATED_AT = CURRENT_TIMESTAMP, ' +
+        '  VERSION = VERSION + 1 ' +
+        'WHERE ID = :ID AND VERSION = :ORIG_VER';
+      Qry.ParamByName('USER').AsString := EffectiveUser;
+      Qry.ParamByName('ID').AsInteger := AID;
+      Qry.ParamByName('ORIG_VER').AsInteger := OldVersion;
+      Qry.ExecSQL;
+      Result := (Qry.RowsAffected > 0);
+
+      if Result then
+      begin
+        Audit := TFlatbedDieAuditEntry.CreateEntry(
+          AID, 'ARCHIVE',
+          Format('Flatbed die archived. Reason: %s (Previous Status: %s)', [AReason, OldStatus]),
+          EffectiveUser, SerialNo
+        );
+        Audit.OldValue := OldStatus;
+        Audit.NewValue := 'ARCHIVED';
+        Audit.FieldName := 'STATUS_CODE';
+        AddAuditEntry(Audit);
+      end;
+
+      if Conn.InTransaction then
+        Conn.Commit;
+    finally
+      Qry.Free;
+    end;
+  except
+    on E: Exception do
+    begin
+      if Conn.InTransaction then
+        Conn.Rollback;
+      raise;
+    end;
+  end;
+end;
+
+function TFlatbedDieRepository.Restore(const AID: Integer; const AReason, AUser: string; const AExpectedVersion: Integer): Boolean;
+var
+  Qry: TFDQuery;
+  OldStatus: string;
+  OldVersion: Integer;
+  SerialNo: string;
+  Audit: TFlatbedDieAuditEntry;
+  Conn: TFDConnection;
+  EffectiveUser: string;
+begin
+  Result := False;
+  EffectiveUser := Trim(AUser);
+  if (EffectiveUser = '') or SameText(EffectiveUser, 'OPERATOR') then
+    EffectiveUser := GetCurrentAppUser;
+
+  Conn := GetConn;
+  if not Conn.InTransaction then
+    Conn.StartTransaction;
+  try
+    Qry := CreateQuery;
+    try
+      SerialNo := '';
+      Qry.SQL.Text := 'SELECT STATUS_CODE, VERSION, SERIAL_NO FROM FLATBED_DIE WHERE ID = :ID';
+      Qry.ParamByName('ID').AsInteger := AID;
+      Qry.Open;
+      if Qry.IsEmpty then
+      begin
+        if Conn.InTransaction then Conn.Rollback;
+        Exit;
+      end;
+      OldStatus := Qry.FieldByName('STATUS_CODE').AsString;
+      OldVersion := Qry.FieldByName('VERSION').AsInteger;
+      SerialNo := Qry.FieldByName('SERIAL_NO').AsString;
+      Qry.Close;
+
+      if (AExpectedVersion > 0) and (OldVersion <> AExpectedVersion) then
+      begin
+        if Conn.InTransaction then Conn.Rollback;
+        raise EDieVixConcurrencyException.Create(
+          'Concurrency conflict: The flatbed die record has been modified by another session. Please reload and review before restoring.'
+        );
+      end;
+
+      if not SameText(OldStatus, 'ARCHIVED') then
+      begin
+        if Conn.InTransaction then Conn.Rollback;
+        Exit;
+      end;
+
+      Qry.SQL.Text :=
+        'UPDATE FLATBED_DIE SET ' +
+        '  STATUS_CODE = ''ACTIVE'', ' +
+        '  UPDATED_BY = :USER, ' +
+        '  UPDATED_AT = CURRENT_TIMESTAMP, ' +
+        '  VERSION = VERSION + 1 ' +
+        'WHERE ID = :ID AND VERSION = :ORIG_VER';
+      Qry.ParamByName('USER').AsString := EffectiveUser;
+      Qry.ParamByName('ID').AsInteger := AID;
+      Qry.ParamByName('ORIG_VER').AsInteger := OldVersion;
+      Qry.ExecSQL;
+      Result := (Qry.RowsAffected > 0);
+
+      if Result then
+      begin
+        Audit := TFlatbedDieAuditEntry.CreateEntry(
+          AID, 'RESTORE',
+          Format('Flatbed die restored from archive. Reason: %s', [AReason]),
+          EffectiveUser, SerialNo
+        );
+        Audit.OldValue := 'ARCHIVED';
+        Audit.NewValue := 'ACTIVE';
+        Audit.FieldName := 'STATUS_CODE';
+        AddAuditEntry(Audit);
+      end;
+
+      if Conn.InTransaction then
+        Conn.Commit;
+    finally
+      Qry.Free;
+    end;
+  except
+    on E: Exception do
+    begin
+      if Conn.InTransaction then
+        Conn.Rollback;
+      raise;
+    end;
+  end;
+end;
+
+function TFlatbedDieRepository.SerialExists(const ASerialNo: string; const AExcludeID: Integer): Boolean;
+var
+  Qry: TFDQuery;
+begin
+  Result := False;
+  Qry := CreateQuery;
+  try
+    Qry.SQL.Text :=
+      'SELECT COUNT(*) FROM FLATBED_DIE ' +
+      'WHERE UPPER(SERIAL_NO) = :S AND ID <> :EXID';
+    Qry.ParamByName('S').AsString := UpperCase(Trim(ASerialNo));
+    Qry.ParamByName('EXID').AsInteger := AExcludeID;
+    Qry.Open;
+    Result := (Qry.Fields[0].AsInteger > 0);
+  finally
+    Qry.Free;
+  end;
+end;
+
+function TFlatbedDieRepository.ChangeStatus(const AID: Integer; const ANewStatusCode, AReason, AUser: string): Boolean;
+var
+  Qry: TFDQuery;
+  Audit: TFlatbedDieAuditEntry;
+  OldStatus, Serial: string;
+begin
+  Result := False;
+  Qry := CreateQuery;
+  try
+    Qry.SQL.Text := 'SELECT STATUS_CODE, SERIAL_NO FROM FLATBED_DIE WHERE ID = :ID';
+    Qry.ParamByName('ID').AsInteger := AID;
+    Qry.Open;
+    if Qry.IsEmpty then Exit;
+    OldStatus := Qry.FieldByName('STATUS_CODE').AsString;
+    Serial := Qry.FieldByName('SERIAL_NO').AsString;
+    Qry.Close;
+
+    Qry.SQL.Text :=
+      'UPDATE FLATBED_DIE SET ' +
+      '  STATUS_CODE = :STATUS, ' +
+      '  UPDATED_BY = :USER, ' +
+      '  UPDATED_AT = CURRENT_TIMESTAMP, ' +
+      '  VERSION = VERSION + 1 ' +
+      'WHERE ID = :ID';
+    Qry.ParamByName('STATUS').AsString := Trim(ANewStatusCode);
+    if Trim(AUser) <> '' then
+      Qry.ParamByName('USER').AsString := Trim(AUser)
+    else
+      Qry.ParamByName('USER').AsString := GetCurrentAppUser;
+    Qry.ParamByName('ID').AsInteger := AID;
+    Qry.ExecSQL;
+    Result := (Qry.RowsAffected > 0);
+
+    if Result then
+    begin
+      Audit := TFlatbedDieAuditEntry.CreateEntry(
+        AID, 'STATUS_CHANGE',
+        Format('Status changed from %s to %s. Reason: %s', [OldStatus, ANewStatusCode, AReason]),
+        AUser, Serial
+      );
+      Audit.OldValue := OldStatus;
+      Audit.NewValue := ANewStatusCode;
+      Audit.FieldName := 'STATUS_CODE';
+      AddAuditEntry(Audit);
+    end;
+  finally
+    Qry.Free;
+  end;
+end;
+
+function TFlatbedDieRepository.UpdateLocation(const AID: Integer; const ARack, AShelf, ABin, ANotes, AUser: string): Boolean;
+var
+  Qry: TFDQuery;
+  Audit: TFlatbedDieAuditEntry;
+  Serial: string;
+begin
+  Result := False;
+  Qry := CreateQuery;
+  try
+    Qry.SQL.Text := 'SELECT SERIAL_NO FROM FLATBED_DIE WHERE ID = :ID';
+    Qry.ParamByName('ID').AsInteger := AID;
+    Qry.Open;
+    if Qry.IsEmpty then Exit;
+    Serial := Qry.FieldByName('SERIAL_NO').AsString;
+    Qry.Close;
+
+    Qry.SQL.Text :=
+      'UPDATE FLATBED_DIE SET ' +
+      '  STORAGE_RACK = :RACK, ' +
+      '  STORAGE_SHELF = :SHELF, ' +
+      '  STORAGE_BIN = :BIN, ' +
+      '  UPDATED_BY = :USER, ' +
+      '  UPDATED_AT = CURRENT_TIMESTAMP, ' +
+      '  VERSION = VERSION + 1 ' +
+      'WHERE ID = :ID';
+    Qry.ParamByName('RACK').AsString := Trim(ARack);
+    Qry.ParamByName('SHELF').AsString := Trim(AShelf);
+    Qry.ParamByName('BIN').AsString := Trim(ABin);
+    if Trim(AUser) <> '' then
+      Qry.ParamByName('USER').AsString := Trim(AUser)
+    else
+      Qry.ParamByName('USER').AsString := GetCurrentAppUser;
+    Qry.ParamByName('ID').AsInteger := AID;
+    Qry.ExecSQL;
+    Result := (Qry.RowsAffected > 0);
+
+    if Result then
+    begin
+      Audit := TFlatbedDieAuditEntry.CreateEntry(
+        AID, 'LOCATION_CHANGE',
+        Format('Storage location moved to Rack: %s, Shelf: %s, Bin: %s. Notes: %s', [ARack, AShelf, ABin, ANotes]),
+        AUser, Serial
+      );
+      Audit.FieldName := 'STORAGE_LOCATION';
+      AddAuditEntry(Audit);
+    end;
+  finally
+    Qry.Free;
+  end;
+end;
+
+function TFlatbedDieRepository.GetAuditLog(const AFlatbedDieID: Integer): TList<TFlatbedDieAuditEntry>;
+var
+  Qry: TFDQuery;
+  Entry: TFlatbedDieAuditEntry;
+begin
+  Result := TList<TFlatbedDieAuditEntry>.Create;
+  Qry := CreateQuery;
+  try
+    Qry.SQL.Text :=
+      'SELECT * FROM FLATBED_DIE_AUDIT_LOG ' +
+      'WHERE FLATBED_DIE_ID = :ID ' +
+      'ORDER BY CHANGED_AT DESC, ID DESC';
+    Qry.ParamByName('ID').AsInteger := AFlatbedDieID;
+    Qry.Open;
+
+    while not Qry.Eof do
+    begin
+      FillChar(Entry, SizeOf(Entry), 0);
+      Entry.ID := Qry.FieldByName('ID').AsInteger;
+      Entry.FlatbedDieID := Qry.FieldByName('FLATBED_DIE_ID').AsInteger;
+      Entry.DieSerialNo := Qry.FieldByName('DIE_SERIAL_NO').AsString;
+      Entry.Action := Qry.FieldByName('ACTION').AsString;
+      Entry.FieldName := Qry.FieldByName('FIELD_NAME').AsString;
+      Entry.OldValue := Qry.FieldByName('OLD_VALUE').AsString;
+      Entry.NewValue := Qry.FieldByName('NEW_VALUE').AsString;
+      Entry.Details := Qry.FieldByName('DETAILS').AsString;
+      Entry.ChangedBy := Qry.FieldByName('CHANGED_BY').AsString;
+      Entry.ChangedAt := Qry.FieldByName('CHANGED_AT').AsDateTime;
+      Result.Add(Entry);
+      Qry.Next;
+    end;
+  finally
+    Qry.Free;
+  end;
+end;
+
+function TFlatbedDieRepository.AddAuditEntry(const AEntry: TFlatbedDieAuditEntry): Boolean;
+var
+  Qry: TFDQuery;
+begin
+  Result := False;
+  Qry := CreateQuery;
+  try
+    Qry.SQL.Text :=
+      'INSERT INTO FLATBED_DIE_AUDIT_LOG (' +
+      '  FLATBED_DIE_ID, DIE_SERIAL_NO, ACTION, FIELD_NAME, ' +
+      '  OLD_VALUE, NEW_VALUE, DETAILS, CHANGED_BY, CHANGED_AT' +
+      ') VALUES (' +
+      '  :FLATBED_DIE_ID, :DIE_SERIAL_NO, :ACTION, :FIELD_NAME, ' +
+      '  :OLD_VALUE, :NEW_VALUE, :DETAILS, :CHANGED_BY, CURRENT_TIMESTAMP' +
+      ')';
+
+    if AEntry.FlatbedDieID > 0 then
+      Qry.ParamByName('FLATBED_DIE_ID').AsInteger := AEntry.FlatbedDieID
+    else
+      Qry.ParamByName('FLATBED_DIE_ID').Clear;
+
+    Qry.ParamByName('DIE_SERIAL_NO').AsString := Trim(AEntry.DieSerialNo);
+    Qry.ParamByName('ACTION').AsString := Trim(AEntry.Action);
+    Qry.ParamByName('FIELD_NAME').AsString := Trim(AEntry.FieldName);
+    Qry.ParamByName('OLD_VALUE').AsString := Trim(AEntry.OldValue);
+    Qry.ParamByName('NEW_VALUE').AsString := Trim(AEntry.NewValue);
+    Qry.ParamByName('DETAILS').AsString := Trim(AEntry.Details);
+
+    if (Trim(AEntry.ChangedBy) <> '') and not SameText(Trim(AEntry.ChangedBy), 'OPERATOR') then
+      Qry.ParamByName('CHANGED_BY').AsString := Trim(AEntry.ChangedBy)
+    else
+      Qry.ParamByName('CHANGED_BY').AsString := GetCurrentAppUser;
+
+    Qry.ExecSQL;
+    Result := (Qry.RowsAffected > 0);
+  finally
     Qry.Free;
   end;
 end;

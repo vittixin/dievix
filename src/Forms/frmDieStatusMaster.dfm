@@ -1,7 +1,7 @@
 object frmDieStatusMaster: TfrmDieStatusMaster
   Left = 0
   Top = 0
-  Caption = 'Die Status Codes — DieVix'
+  Caption = 'Die Status Codes - DieVix'
   ClientHeight = 480
   ClientWidth = 680
   Color = clBtnFace

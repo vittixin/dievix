@@ -1,7 +1,7 @@
 unit DieVixDieTests;
 
 {==============================================================================
-  DieVix – Rotary Die & Keyline Manager
+  DieVix - Rotary Die & Keyline Manager
   DUnitX Test Suite: Phase 3 Die Master Register, Inventory & Validation
   Comprehensive Firebird 5.0 integration tests operating on disposable database.
 ==============================================================================}
@@ -11,6 +11,7 @@ interface
 uses
   System.SysUtils,
   System.Classes,
+  System.IOUtils,
   System.Generics.Collections,
   Data.DB,
   DUnitX.TestFramework,
@@ -195,6 +196,12 @@ type
 
     [Test]
     procedure Test49_ExistingKeylineCalculatorRegression;
+
+    [Test]
+    procedure Test50_WindowsUsernameCapturedAsDefaultActorAndAuditPreservedOnDelete;
+
+    [Test]
+    procedure Test51_DeletingDiePreservesAuditRowsUnchanged;
   private
     function CreateAndSaveTestDie(
       const ASerial: string;
@@ -216,24 +223,20 @@ implementation
 procedure TDieVixDieTests.SetupFixture;
 var
   Mgr: TDieVixConnectionManager;
-  Cfg: TDatabaseConfig;
   AppCount: Integer;
   LogStr: string;
   Cust: TCustomer;
   Med: TMedia;
 begin
   Mgr := TDieVixConnectionManager.Instance;
-  Cfg := TDatabaseConfig.DefaultServer;
-  Cfg.Database := 'D:\ketan\github\DieVix\tmp\dievix_disposable_test.fdb';
-  Cfg.UserName := 'SYSDBA';
-  Cfg.Password := 'masterkey';
-  Cfg.VendorLib := 'C:\Program Files (x86)\Firebird\Firebird_5_0\fbclient.dll';
-  Mgr.Config := Cfg;
-
   FConn := Mgr.GetConnection;
 
-  // Apply all pending migrations including V003
-  Mgr.ApplyMigrations('D:\ketan\github\DieVix\migrations', AppCount, LogStr);
+  // Apply all pending migrations
+  Mgr.ApplyMigrations(TPath.GetFullPath(TPath.Combine(ExtractFilePath(ParamStr(0)), '..\migrations')), AppCount, LogStr);
+
+  // Clean up any test dies from previous interrupted runs to ensure test hygiene
+  FConn.ExecSQL('DELETE FROM DIE_AUDIT_LOG WHERE DIE_ID IN (SELECT ID FROM DIE WHERE SERIAL_NO LIKE ''ZZTEST-%'' OR CUSTOMER_ID IN (SELECT ID FROM CUSTOMER WHERE CODE = ''ZZTEST_CUST_PH3''))');
+  FConn.ExecSQL('DELETE FROM DIE WHERE SERIAL_NO LIKE ''ZZTEST-%'' OR CUSTOMER_ID IN (SELECT ID FROM CUSTOMER WHERE CODE = ''ZZTEST_CUST_PH3'')');
 
   FCustomerRepo := TCustomerRepository.Create(FConn);
   FMediaRepo := TMediaRepository.Create(FConn);
@@ -258,18 +261,39 @@ begin
   FStatusRepo.Save(TDieStatus.CreateNew('IN_REPAIR', 'Under Repair / Sharpening', False));
   FStatusRepo.Save(TDieStatus.CreateNew('SCRAPPED', 'Damaged / Retired', False));
 
-  // Setup test customer and media
-  Cust := TCustomer.CreateNew('TEST-CUST-PH3', 'Phase 3 Test Customer');
-  FTestCustID := FCustomerRepo.Insert(Cust);
+  // Setup test customer and media (reuse if present from interrupted run)
+  Cust := FCustomerRepo.GetByCode('ZZTEST_CUST_PH3');
+  if Cust.ID > 0 then
+    FTestCustID := Cust.ID
+  else
+  begin
+    Cust := TCustomer.CreateNew('ZZTEST_CUST_PH3', 'Phase 3 Test Customer');
+    FTestCustID := FCustomerRepo.Insert(Cust);
+  end;
 
-  Med := TMedia.CreateNew('TEST-MED-PH3', 'Semi-Gloss 80g / Glassine 62g');
-  FTestMediaID := FMediaRepo.Insert(Med);
+  Med := FMediaRepo.GetByCode('ZZTEST_MED_PH3');
+  if Med.ID > 0 then
+    FTestMediaID := Med.ID
+  else
+  begin
+    Med := TMedia.CreateNew('ZZTEST_MED_PH3', 'Semi-Gloss 80g / Glassine 62g');
+    FTestMediaID := FMediaRepo.Insert(Med);
+  end;
 
   FTestDieID := 0;
 end;
 
 procedure TDieVixDieTests.TearDownFixture;
 begin
+  if Assigned(FConn) and FConn.Connected then
+  begin
+    try
+      FConn.ExecSQL('DELETE FROM DIE_AUDIT_LOG WHERE DIE_ID IN (SELECT ID FROM DIE WHERE SERIAL_NO LIKE ''ZZTEST-%'' OR CUSTOMER_ID IN (SELECT ID FROM CUSTOMER WHERE CODE = ''ZZTEST_CUST_PH3''))');
+      FConn.ExecSQL('DELETE FROM DIE WHERE SERIAL_NO LIKE ''ZZTEST-%'' OR CUSTOMER_ID IN (SELECT ID FROM CUSTOMER WHERE CODE = ''ZZTEST_CUST_PH3'')');
+    except
+    end;
+  end;
+
   if FTestCustID > 0 then
     FCustomerRepo.Delete(FTestCustID);
   if FTestMediaID > 0 then
@@ -286,7 +310,8 @@ var
   OK: Boolean;
 begin
   // Calling migration runner again should find 0 pending scripts and return True (idempotent)
-  OK := TDieVixConnectionManager.Instance.ApplyMigrations('D:\ketan\github\DieVix\migrations', AppCount, LogStr);
+  OK := TDieVixConnectionManager.Instance.ApplyMigrations(
+    TPath.GetFullPath(TPath.Combine(ExtractFilePath(ParamStr(0)), '..\migrations')), AppCount, LogStr);
   Assert.IsTrue(OK, 'Migration runner must succeed');
   Assert.AreEqual(0, AppCount, 'Second run must apply 0 scripts (idempotent)');
 end;
@@ -297,7 +322,7 @@ var
 begin
   // Create a standard compliant rotary die: 96T, 98.0mm around, 50.0mm across, 3 around ups
   // Repeat = 96 * 3.175 = 304.8 mm. Total cut = 3 * 98 = 294 mm. Pool = 10.8 mm. Gap = 3.600 mm.
-  Die := TDie.CreateNew('DIE-PH3-001', 96, 98.0, 50.0, 3, 2);
+  Die := TDie.CreateNew('ZZTEST-PH3-001', 96, 98.0, 50.0, 3, 2);
   Die.CustomerID := FTestCustID;
   Die.MediaID := FTestMediaID;
   Die.Description := 'Ph3 Main Product Label 98x50';
@@ -322,7 +347,7 @@ begin
 
   DieByID := FDieService.GetDieByID(FTestDieID);
   Assert.AreEqual(FTestDieID, DieByID.ID, 'Die ID must match');
-  Assert.AreEqual('DIE-PH3-001', DieByID.SerialNo, 'Serial must match');
+  Assert.AreEqual('ZZTEST-PH3-001', DieByID.SerialNo, 'Serial must match');
   Assert.AreEqual(96, DieByID.Teeth, 'Teeth must be 96');
   Assert.AreEqual(3, DieByID.AroundUps, 'Around ups must be 3');
   Assert.AreEqual(2, DieByID.AcrossUps, 'Across ups must be 2');
@@ -330,7 +355,7 @@ begin
   Assert.AreEqual(3.600, DieByID.AroundGapMm, 0.001, 'Around gap mm must be 3.600');
   Assert.AreEqual('RACK-A', DieByID.StorageRack, 'Storage rack must match');
 
-  DieBySerial := FDieService.GetDieBySerial('die-ph3-001');
+  DieBySerial := FDieService.GetDieBySerial('zztest-ph3-001');
   Assert.AreEqual(FTestDieID, DieBySerial.ID, 'Serial lookup must be case-insensitive');
   Assert.AreEqual('Ph3 Main Product Label 98x50', DieBySerial.Description, 'Description must match');
 end;
@@ -362,7 +387,7 @@ var
   RaisedDup: Boolean;
 begin
   RaisedDup := False;
-  DupDie := TDie.CreateNew('DIE-PH3-001', 96, 98.0, 50.0, 3, 2);
+  DupDie := TDie.CreateNew('ZZTEST-PH3-001', 96, 98.0, 50.0, 3, 2);
   try
     FDieService.SaveDie(DupDie);
   except
@@ -376,7 +401,7 @@ procedure TDieVixDieTests.Test06_ConcurrentDuplicateSerialAttempts;
 var
   Exists: Boolean;
 begin
-  Exists := FDieService.CheckDuplicateSerial('die-ph3-001');
+  Exists := FDieService.CheckDuplicateSerial('zztest-ph3-001');
   Assert.IsTrue(Exists, 'CheckDuplicateSerial must detect existing serial case-insensitively');
 
   Exists := FDieService.CheckDuplicateSerial('NON_EXISTENT_SERIAL');
@@ -390,7 +415,7 @@ var
 begin
   // 96T * 3.175 = 304.8 mm. With 3 ups, repeat / 3 = 101.6 mm.
   // Around size = 98.600 mm -> Around gap = exactly 3.000 mm.
-  Die := TDie.CreateNew('DIE-PH3-EXACT3MM', 96, 98.600, 40.0, 3, 1);
+  Die := TDie.CreateNew('ZZTEST-PH3-EXACT3MM', 96, 98.600, 40.0, 3, 1);
   SavedID := FDieService.SaveDie(Die);
   try
     Assert.IsTrue(SavedID > 0, 'Exact 3.000 mm die must save without error');
@@ -410,7 +435,7 @@ var
 begin
   // 96T * 3.175 = 304.8 mm. 3 ups of 98.700 mm -> Total cut = 296.1 mm. Gap pool = 8.7 mm.
   // Around gap = 8.7 / 3 = 2.900 mm (< 3.000 mm minimum)
-  Die := TDie.CreateNew('DIE-PH3-SUB3MM', 96, 98.700, 40.0, 3, 1);
+  Die := TDie.CreateNew('ZZTEST-PH3-SUB3MM', 96, 98.700, 40.0, 3, 1);
 
   // 1. Attempt save without override reason
   RaisedMissingReason := False;
@@ -445,7 +470,7 @@ begin
   try
     // 96T * 3.175 = 304.8 mm. 3 ups of 99.200 mm -> total cut = 297.6 mm.
     // Pool = 7.2 mm. Gap = 7.2 / 3 = 2.400 mm (< 2.500 mm hard block limit)
-    Die := TDie.CreateNew('DIE-PH3-HARDBLOCK', 96, 99.200, 40.0, 3, 1);
+    Die := TDie.CreateNew('ZZTEST-PH3-HARDBLOCK', 96, 99.200, 40.0, 3, 1);
     Die.OverrideReason := 'Attempting to override mechanical hard block';
 
     RaisedHardBlock := False;
@@ -468,7 +493,7 @@ var
   RaisedNeg: Boolean;
 begin
   // 96T * 3.175 = 304.8 mm. 3 ups of 110.0 mm -> total cut = 330.0 mm (> 304.8 mm circumference)
-  Die := TDie.CreateNew('DIE-PH3-OVERSIZE', 96, 110.0, 40.0, 3, 1);
+  Die := TDie.CreateNew('ZZTEST-PH3-OVERSIZE', 96, 110.0, 40.0, 3, 1);
   RaisedNeg := False;
   try
     FDieService.SaveDie(Die);
@@ -485,7 +510,7 @@ var
   SavedID: Integer;
 begin
   // Verify that an existing die retains its historical pitch snapshot
-  Die := TDie.CreateNew('DIE-PH3-HISTORICAL', 96, 98.0, 50.0, 3, 1);
+  Die := TDie.CreateNew('ZZTEST-PH3-HISTORICAL', 96, 98.0, 50.0, 3, 1);
   Die.PitchUm := 3175;
   SavedID := FDieService.SaveDie(Die);
   try
@@ -521,7 +546,7 @@ begin
   try
     Assert.IsTrue(Matches.Count > 0, 'Must find existing die with identical geometry');
     Assert.AreEqual(TSimilarDieMatchType.smtExact, Matches[0].MatchType, 'Must classify as exact match');
-    Assert.AreEqual('DIE-PH3-001', Matches[0].Die.SerialNo, 'Serial must match');
+    Assert.AreEqual('ZZTEST-PH3-001', Matches[0].Die.SerialNo, 'Serial must match');
   finally
     Matches.Free;
   end;
@@ -620,7 +645,7 @@ begin
   try
     Qry.Connection := FConn;
     Trans.Connection := FConn;
-    FConn.Transaction := Trans;
+    Qry.Transaction := Trans;
 
     Qry.SQL.Text := 'SELECT COUNT(*) FROM DIE';
     Qry.Open;
@@ -631,7 +656,7 @@ begin
     Trans.StartTransaction;
     Qry.SQL.Text :=
       'INSERT INTO DIE (SERIAL_NO, TEETH, AROUND_SIZE_MM, ACROSS_SIZE_MM, CREATED_BY) ' +
-      'VALUES (''DIE-ROLLBACK-TEST'', 96, 50.0, 50.0, ''TEST'')';
+      'VALUES (''ZZTEST-ROLLBACK-001'', 96, 50.0, 50.0, ''TEST'')';
     Qry.ExecSQL;
 
     // Rollback
@@ -679,7 +704,7 @@ var
   Die: TDie;
   SavedID: Integer;
 begin
-  Die := TDie.CreateNew('DIE-PH3-GEOM-TEST', 106, 75.321, 62.456, 4, 3);
+  Die := TDie.CreateNew('ZZTEST-PH3-GEOM-TEST', 106, 75.321, 62.456, 4, 3);
   Die.AcrossGapMm := 3.250;
   Die.CornerRadiusMm := 1.750;
   Die.Shape := 'OVAL';
@@ -705,7 +730,7 @@ var
   Results: TList<TDie>;
 begin
   Filter := TDieSearchFilter.Default;
-  Filter.SearchText := 'PH3-001'; // Matches serial DIE-PH3-001
+  Filter.SearchText := 'PH3-001'; // Matches serial ZZTEST-PH3-001
   Results := FDieService.SearchDies(Filter);
   try
     Assert.IsTrue(Results.Count > 0, 'Search text filter must return matching dies');
@@ -729,7 +754,7 @@ var
   Die: TDie;
   RaisedZeroAround: Boolean;
 begin
-  Die := TDie.CreateNew('DIE-PH3-ZERO-DIM', 96, 0.0, 50.0, 1, 1);
+  Die := TDie.CreateNew('ZZTEST-PH3-ZERO-DIM', 96, 0.0, 50.0, 1, 1);
   RaisedZeroAround := False;
   try
     FDieService.SaveDie(Die);
@@ -746,7 +771,7 @@ var
   RaisedOverflow: Boolean;
 begin
   // Huge dimensions that would overflow cylinder circumference
-  Die := TDie.CreateNew('DIE-PH3-HUGE', 132, 999999.0, 50.0, 1, 1);
+  Die := TDie.CreateNew('ZZTEST-PH3-HUGE', 132, 999999.0, 50.0, 1, 1);
   RaisedOverflow := False;
   try
     FDieService.SaveDie(Die);
@@ -807,13 +832,13 @@ var
   Results: TList<TSmartDieSearchResult>;
   TotalCount: Integer;
 begin
-  DieID := CreateAndSaveTestDie('DIE-SS-26-EXACT', 98, 150.0, 100.0, 2, 1);
+  DieID := CreateAndSaveTestDie('ZZTEST-SS-26-EXACT', 98, 150.0, 100.0, 2, 1);
   try
     Filter := TSmartDieSizeFilter.CreateDefault(150.0, 100.0, 2.0);
     Results := FDieService.SmartSearchDies(Filter, TotalCount);
     try
       Assert.IsTrue(Results.Count > 0, 'Exact match must return at least one die');
-      Assert.AreEqual('DIE-SS-26-EXACT', Results[0].Die.SerialNo, 'Exact match must be ranked first');
+      Assert.AreEqual('ZZTEST-SS-26-EXACT', Results[0].Die.SerialNo, 'Exact match must be ranked first');
       Assert.IsTrue(Results[0].MatchClass = sdmExactMatch, 'MatchClass must be sdmExactMatch');
       Assert.AreEqual(Int64(0), Results[0].AroundDiffUm, 'AroundDiffUm must be 0');
       Assert.AreEqual(Int64(0), Results[0].AcrossDiffUm, 'AcrossDiffUm must be 0');
@@ -836,7 +861,7 @@ var
   Found: Boolean;
   I: Integer;
 begin
-  DieID := CreateAndSaveTestDie('DIE-SS-27-NEAR1', 98, 149.0, 100.0, 2, 1);
+  DieID := CreateAndSaveTestDie('ZZTEST-SS-27-NEAR1', 98, 149.0, 100.0, 2, 1);
   try
     Filter := TSmartDieSizeFilter.CreateDefault(150.0, 100.0, 2.0);
     Results := FDieService.SmartSearchDies(Filter, TotalCount);
@@ -844,7 +869,7 @@ begin
       Found := False;
       for I := 0 to Results.Count - 1 do
       begin
-        if Results[I].Die.SerialNo = 'DIE-SS-27-NEAR1' then
+        if Results[I].Die.SerialNo = 'ZZTEST-SS-27-NEAR1' then
         begin
           Found := True;
           Assert.IsTrue(Results[I].MatchClass = sdmNearMatchTier1, '149x100 must be classified as Tier 1 near match');
@@ -854,7 +879,7 @@ begin
           Assert.AreEqual(0.0, Results[I].AcrossDiffMm, 0.0001, 'Across diff mm must be 0.0');
         end;
       end;
-      Assert.IsTrue(Found, 'DIE-SS-27-NEAR1 must be found in search results');
+      Assert.IsTrue(Found, 'ZZTEST-SS-27-NEAR1 must be found in search results');
     finally
       Results.Free;
     end;
@@ -872,7 +897,7 @@ var
   Found: Boolean;
   I: Integer;
 begin
-  DieID := CreateAndSaveTestDie('DIE-SS-28-NEAR2', 98, 151.5, 102.0, 2, 1);
+  DieID := CreateAndSaveTestDie('ZZTEST-SS-28-NEAR2', 98, 151.5, 102.0, 2, 1);
   try
     Filter := TSmartDieSizeFilter.CreateDefault(150.0, 100.0, 2.0);
     Results := FDieService.SmartSearchDies(Filter, TotalCount);
@@ -880,7 +905,7 @@ begin
       Found := False;
       for I := 0 to Results.Count - 1 do
       begin
-        if Results[I].Die.SerialNo = 'DIE-SS-28-NEAR2' then
+        if Results[I].Die.SerialNo = 'ZZTEST-SS-28-NEAR2' then
         begin
           Found := True;
           Assert.IsTrue(Results[I].MatchClass = sdmNearMatchTier2, '151.5x102 must be classified as Tier 2 near match');
@@ -890,7 +915,7 @@ begin
           Assert.AreEqual(2.0, Results[I].AcrossDiffMm, 0.0001, 'Across diff mm must be +2.0');
         end;
       end;
-      Assert.IsTrue(Found, 'DIE-SS-28-NEAR2 must be found in search results');
+      Assert.IsTrue(Found, 'ZZTEST-SS-28-NEAR2 must be found in search results');
     finally
       Results.Free;
     end;
@@ -908,7 +933,7 @@ var
   Found: Boolean;
   I: Integer;
 begin
-  DieID := CreateAndSaveTestDie('DIE-SS-29-EXCL', 98, 153.0, 100.0, 2, 1, 'AVAILABLE', 'RECTANGLE', 'ROTARY', 0.0, 'Sub3mm gap override');
+  DieID := CreateAndSaveTestDie('ZZTEST-SS-29-EXCL', 98, 153.0, 100.0, 2, 1, 'AVAILABLE', 'RECTANGLE', 'ROTARY', 0.0, 'Sub3mm gap override');
   try
     // Tolerance = 2.0 mm -> Must be excluded
     Filter := TSmartDieSizeFilter.CreateDefault(150.0, 100.0, 2.0);
@@ -916,7 +941,7 @@ begin
     try
       Found := False;
       for I := 0 to Results.Count - 1 do
-        if Results[I].Die.SerialNo = 'DIE-SS-29-EXCL' then
+        if Results[I].Die.SerialNo = 'ZZTEST-SS-29-EXCL' then
           Found := True;
       Assert.IsFalse(Found, '153x100 must be excluded when tolerance is 2.0 mm');
     finally
@@ -929,7 +954,7 @@ begin
     try
       Found := False;
       for I := 0 to Results.Count - 1 do
-        if Results[I].Die.SerialNo = 'DIE-SS-29-EXCL' then
+        if Results[I].Die.SerialNo = 'ZZTEST-SS-29-EXCL' then
           Found := True;
       Assert.IsTrue(Found, '153x100 must be included when operator explicitly expands tolerance to 3.5 mm');
     finally
@@ -952,8 +977,8 @@ begin
   // Candidate B: Around diff +0.500 mm (500 um), Across diff +0.050 mm (50 um)
   // Both are within 1.0 mm (Tier 1). Across proximity alone would pick B,
   // but Around has the highest search priority, so A MUST rank before B!
-  DieA_ID := CreateAndSaveTestDie('DIE-SS-30-PRIO-A', 98, 150.100, 100.800, 2, 1);
-  DieB_ID := CreateAndSaveTestDie('DIE-SS-30-PRIO-B', 98, 150.500, 100.050, 2, 1);
+  DieA_ID := CreateAndSaveTestDie('ZZTEST-SS-30-PRIO-A', 98, 150.100, 100.800, 2, 1);
+  DieB_ID := CreateAndSaveTestDie('ZZTEST-SS-30-PRIO-B', 98, 150.500, 100.050, 2, 1);
   try
     Filter := TSmartDieSizeFilter.CreateDefault(150.0, 100.0, 2.0);
     Results := FDieService.SmartSearchDies(Filter, TotalCount);
@@ -962,9 +987,9 @@ begin
       IdxB := -1;
       for I := 0 to Results.Count - 1 do
       begin
-        if Results[I].Die.SerialNo = 'DIE-SS-30-PRIO-A' then
+        if Results[I].Die.SerialNo = 'ZZTEST-SS-30-PRIO-A' then
           IdxA := I;
-        if Results[I].Die.SerialNo = 'DIE-SS-30-PRIO-B' then
+        if Results[I].Die.SerialNo = 'ZZTEST-SS-30-PRIO-B' then
           IdxB := I;
       end;
 
@@ -989,7 +1014,7 @@ var
   Found: Boolean;
   I: Integer;
 begin
-  DieID := CreateAndSaveTestDie('DIE-SS-31-SLIT', 98, 150.0, 108.0, 2, 1);
+  DieID := CreateAndSaveTestDie('ZZTEST-SS-31-SLIT', 98, 150.0, 108.0, 2, 1);
   try
     // 1. With IncludeSlitting = True
     Filter := TSmartDieSizeFilter.CreateDefault(150.0, 100.0, 2.0);
@@ -999,7 +1024,7 @@ begin
       Found := False;
       for I := 0 to Results.Count - 1 do
       begin
-        if Results[I].Die.SerialNo = 'DIE-SS-31-SLIT' then
+        if Results[I].Die.SerialNo = 'ZZTEST-SS-31-SLIT' then
         begin
           Found := True;
           Assert.IsTrue(Results[I].MatchClass = sdmSlittingCandidate, 'Must be classified as sdmSlittingCandidate');
@@ -1017,7 +1042,7 @@ begin
     try
       Found := False;
       for I := 0 to Results.Count - 1 do
-        if Results[I].Die.SerialNo = 'DIE-SS-31-SLIT' then
+        if Results[I].Die.SerialNo = 'ZZTEST-SS-31-SLIT' then
           Found := True;
       Assert.IsFalse(Found, 'Slitting candidate must be excluded when IncludeSlitting is False');
     finally
@@ -1037,7 +1062,7 @@ var
   Found: Boolean;
   I: Integer;
 begin
-  DieID := CreateAndSaveTestDie('DIE-SS-32-SCRAP', 98, 150.0, 100.0, 2, 1, 'SCRAPPED');
+  DieID := CreateAndSaveTestDie('ZZTEST-SS-32-SCRAP', 98, 150.0, 100.0, 2, 1, 'SCRAPPED');
   try
     // ActiveOnly = True -> Must be excluded
     Filter := TSmartDieSizeFilter.CreateDefault(150.0, 100.0, 2.0);
@@ -1046,7 +1071,7 @@ begin
     try
       Found := False;
       for I := 0 to Results.Count - 1 do
-        if Results[I].Die.SerialNo = 'DIE-SS-32-SCRAP' then
+        if Results[I].Die.SerialNo = 'ZZTEST-SS-32-SCRAP' then
           Found := True;
       Assert.IsFalse(Found, 'Scrapped die must be excluded when ActiveOnly is True');
     finally
@@ -1060,7 +1085,7 @@ begin
     try
       Found := False;
       for I := 0 to Results.Count - 1 do
-        if Results[I].Die.SerialNo = 'DIE-SS-32-SCRAP' then
+        if Results[I].Die.SerialNo = 'ZZTEST-SS-32-SCRAP' then
           Found := True;
       Assert.IsTrue(Found, 'Scrapped die must be found when explicitly filtered by status');
     finally
@@ -1080,10 +1105,10 @@ var
   FoundIn1, FoundOut1, FoundIn2, FoundOut2: Boolean;
   I: Integer;
 begin
-  DieIn1_ID := CreateAndSaveTestDie('DIE-SS-33-IN1', 98, 152.000, 100.0, 2, 1);
-  DieOut1_ID := CreateAndSaveTestDie('DIE-SS-33-OUT1', 98, 152.001, 100.0, 2, 1);
-  DieIn2_ID := CreateAndSaveTestDie('DIE-SS-33-IN2', 98, 148.000, 100.0, 2, 1);
-  DieOut2_ID := CreateAndSaveTestDie('DIE-SS-33-OUT2', 98, 147.999, 100.0, 2, 1);
+  DieIn1_ID := CreateAndSaveTestDie('ZZTEST-SS-33-IN1', 98, 152.000, 100.0, 2, 1);
+  DieOut1_ID := CreateAndSaveTestDie('ZZTEST-SS-33-OUT1', 98, 152.001, 100.0, 2, 1);
+  DieIn2_ID := CreateAndSaveTestDie('ZZTEST-SS-33-IN2', 98, 148.000, 100.0, 2, 1);
+  DieOut2_ID := CreateAndSaveTestDie('ZZTEST-SS-33-OUT2', 98, 147.999, 100.0, 2, 1);
   try
     Filter := TSmartDieSizeFilter.CreateDefault(150.0, 100.0, 2.000);
     Results := FDieService.SmartSearchDies(Filter, TotalCount);
@@ -1095,10 +1120,10 @@ begin
 
       for I := 0 to Results.Count - 1 do
       begin
-        if Results[I].Die.SerialNo = 'DIE-SS-33-IN1' then FoundIn1 := True;
-        if Results[I].Die.SerialNo = 'DIE-SS-33-OUT1' then FoundOut1 := True;
-        if Results[I].Die.SerialNo = 'DIE-SS-33-IN2' then FoundIn2 := True;
-        if Results[I].Die.SerialNo = 'DIE-SS-33-OUT2' then FoundOut2 := True;
+        if Results[I].Die.SerialNo = 'ZZTEST-SS-33-IN1' then FoundIn1 := True;
+        if Results[I].Die.SerialNo = 'ZZTEST-SS-33-OUT1' then FoundOut1 := True;
+        if Results[I].Die.SerialNo = 'ZZTEST-SS-33-IN2' then FoundIn2 := True;
+        if Results[I].Die.SerialNo = 'ZZTEST-SS-33-OUT2' then FoundOut2 := True;
       end;
 
       Assert.IsTrue(FoundIn1, '152.000 (+2000 um) must be included within 2.000 mm tolerance');
@@ -1123,9 +1148,9 @@ var
   Page1, Page2: TList<TSmartDieSearchResult>;
   TotalCount: Integer;
 begin
-  Die1_ID := CreateAndSaveTestDie('DIE-SS-34-PAG1', 98, 150.0, 100.0, 2, 1);
-  Die2_ID := CreateAndSaveTestDie('DIE-SS-34-PAG2', 98, 150.2, 100.1, 2, 1);
-  Die3_ID := CreateAndSaveTestDie('DIE-SS-34-PAG3', 98, 150.4, 100.2, 2, 1);
+  Die1_ID := CreateAndSaveTestDie('ZZTEST-SS-34-PAG1', 98, 150.0, 100.0, 2, 1);
+  Die2_ID := CreateAndSaveTestDie('ZZTEST-SS-34-PAG2', 98, 150.2, 100.1, 2, 1);
+  Die3_ID := CreateAndSaveTestDie('ZZTEST-SS-34-PAG3', 98, 150.4, 100.2, 2, 1);
   try
     // Test Page 1 with PageSize = 2
     Filter := TSmartDieSizeFilter.CreateDefault(150.0, 100.0, 2.0);
@@ -1134,7 +1159,7 @@ begin
 
     Page1 := FDieService.SmartSearchDies(Filter, TotalCount);
     try
-      Assert.AreEqual(2, Page1.Count, 'Page 1 must return exactly 2 items');
+      Assert.AreEqual(2, Integer(Page1.Count), 'Page 1 must return exactly 2 items');
       Assert.IsTrue(TotalCount >= 3, 'TotalCount must be at least 3');
 
       // Test Page 2 with PageSize = 2
@@ -1159,7 +1184,7 @@ begin
     Page1 := FDieService.SmartSearchDies(Filter, TotalCount);
     try
       // Parameterized query must succeed and return 0 safely
-      Assert.AreEqual(0, Page1.Count, 'Safe parameterized query with injection characters must return 0 without error');
+      Assert.AreEqual(0, Integer(Page1.Count), 'Safe parameterized query with injection characters must return 0 without error');
     finally
       Page1.Free;
     end;
@@ -1177,7 +1202,7 @@ var
   Qry: TFDQuery;
 begin
   // Create a die and link it to STAGING_LEGACY_KEYLINE
-  DieID := CreateAndSaveTestDie('DIE-ARC-STG-001', 96, 98.0, 50.0, 3, 2);
+  DieID := CreateAndSaveTestDie('ZZTEST-ARC-STG-001', 96, 98.0, 50.0, 3, 2);
   Qry := TFDQuery.Create(nil);
   try
     Qry.Connection := FConn;
@@ -1203,7 +1228,7 @@ var
   Qry: TFDQuery;
   StagingCount: Integer;
 begin
-  Die := FDieService.GetDieBySerial('DIE-ARC-STG-001');
+  Die := FDieService.GetDieBySerial('ZZTEST-ARC-STG-001');
   Assert.IsTrue(Die.ID > 0, 'Test die must exist');
 
   Qry := TFDQuery.Create(nil);
@@ -1227,7 +1252,7 @@ var
   Qry: TFDQuery;
   FoundArchiveAudit: Boolean;
 begin
-  Die := FDieService.GetDieBySerial('DIE-ARC-STG-001');
+  Die := FDieService.GetDieBySerial('ZZTEST-ARC-STG-001');
   Assert.IsTrue(Die.ID > 0, 'Test die must exist');
 
   Qry := TFDQuery.Create(nil);
@@ -1260,13 +1285,13 @@ var
 begin
   Filter := TDieSearchFilter.Default;
   Filter.IncludeArchived := False;
-  Filter.SearchText := 'DIE-ARC-STG-001';
+  Filter.SearchText := 'ZZTEST-ARC-STG-001';
 
   Results := FDieService.SearchDies(Filter);
   try
     Found := False;
     for I := 0 to Results.Count - 1 do
-      if Results[I].SerialNo = 'DIE-ARC-STG-001' then
+      if Results[I].SerialNo = 'ZZTEST-ARC-STG-001' then
         Found := True;
 
     Assert.IsFalse(Found, 'Archived die must be excluded from default active searches');
@@ -1290,7 +1315,7 @@ begin
   try
     Found := False;
     for I := 0 to Results.Count - 1 do
-      if Results[I].Die.SerialNo = 'DIE-ARC-STG-001' then
+      if Results[I].Die.SerialNo = 'ZZTEST-ARC-STG-001' then
         Found := True;
 
     Assert.IsFalse(Found, 'Archived die must be excluded from Smart Die Finder when IncludeArchived is False');
@@ -1309,7 +1334,7 @@ begin
   try
     Found := False;
     for I := 0 to Similar.Count - 1 do
-      if Similar[I].Die.SerialNo = 'DIE-ARC-STG-001' then
+      if Similar[I].Die.SerialNo = 'ZZTEST-ARC-STG-001' then
         Found := True;
 
     Assert.IsFalse(Found, 'Archived die must not be suggested for tooling reuse');
@@ -1328,13 +1353,13 @@ begin
   // Test 1: IncludeArchived = True
   Filter := TDieSearchFilter.Default;
   Filter.IncludeArchived := True;
-  Filter.SearchText := 'DIE-ARC-STG-001';
+  Filter.SearchText := 'ZZTEST-ARC-STG-001';
 
   Results := FDieService.SearchDies(Filter);
   try
     Found := False;
     for I := 0 to Results.Count - 1 do
-      if Results[I].SerialNo = 'DIE-ARC-STG-001' then
+      if Results[I].SerialNo = 'ZZTEST-ARC-STG-001' then
         Found := True;
 
     Assert.IsTrue(Found, 'Explicit search with IncludeArchived = True must find archived dies');
@@ -1345,13 +1370,13 @@ begin
   // Test 2: Filter by StatusCode = 'ARCHIVED'
   Filter := TDieSearchFilter.Default;
   Filter.StatusCode := 'ARCHIVED';
-  Filter.SearchText := 'DIE-ARC-STG-001';
+  Filter.SearchText := 'ZZTEST-ARC-STG-001';
 
   Results := FDieService.SearchDies(Filter);
   try
     Found := False;
     for I := 0 to Results.Count - 1 do
-      if Results[I].SerialNo = 'DIE-ARC-STG-001' then
+      if Results[I].SerialNo = 'ZZTEST-ARC-STG-001' then
         Found := True;
 
     Assert.IsTrue(Found, 'Search with StatusCode = ARCHIVED must find archived dies');
@@ -1368,7 +1393,7 @@ var
   Qry: TFDQuery;
   FoundRestoreAudit: Boolean;
 begin
-  Die := FDieService.GetDieBySerial('DIE-ARC-STG-001');
+  Die := FDieService.GetDieBySerial('ZZTEST-ARC-STG-001');
   Assert.IsTrue(Die.ID > 0, 'Test die must exist');
   Assert.AreEqual('ARCHIVED', Die.StatusCode);
 
@@ -1403,7 +1428,7 @@ begin
   // Verify it appears in active searches again
   Filter := TDieSearchFilter.Default;
   Filter.IncludeArchived := False;
-  Filter.SearchText := 'DIE-ARC-STG-001';
+  Filter.SearchText := 'ZZTEST-ARC-STG-001';
   Results := FDieService.SearchDies(Filter);
   try
     Assert.IsTrue(Results.Count > 0, 'Restored die must appear in default active searches');
@@ -1417,7 +1442,7 @@ var
   Die: TDie;
   RaisedEmpty: Boolean;
 begin
-  Die := FDieService.GetDieBySerial('DIE-ARC-STG-001');
+  Die := FDieService.GetDieBySerial('ZZTEST-ARC-STG-001');
   Assert.IsTrue(Die.ID > 0, 'Test die must exist');
 
   RaisedEmpty := False;
@@ -1437,7 +1462,7 @@ var
   Qry: TFDQuery;
   RaisedConflict: Boolean;
 begin
-  Die := FDieService.GetDieBySerial('DIE-ARC-STG-001');
+  Die := FDieService.GetDieBySerial('ZZTEST-ARC-STG-001');
   Assert.IsTrue(Die.ID > 0, 'Test die must exist');
 
   // Simulate a concurrent modification by another user incrementing version in DB
@@ -1471,7 +1496,7 @@ var
   RaisedValidation: Boolean;
   Qry: TFDQuery;
 begin
-  Die := FDieService.GetDieBySerial('DIE-ARC-STG-001');
+  Die := FDieService.GetDieBySerial('ZZTEST-ARC-STG-001');
   Assert.IsTrue(Die.ID > 0, 'Test die must exist');
 
   // Pre-flight check
@@ -1515,7 +1540,7 @@ var
   DeletedOK: Boolean;
   DeletedDie: TDie;
 begin
-  DieID := CreateAndSaveTestDie('DIE-DISP-001', 98, 120.0, 60.0, 2, 2);
+  DieID := CreateAndSaveTestDie('ZZTEST-DISP-001', 98, 120.0, 60.0, 2, 2);
 
   CanDelete := FDieService.CanPermanentlyDeleteDie(DieID, RefusalReason);
   Assert.IsTrue(CanDelete, 'Unreferenced disposable die must be eligible for permanent deletion');
@@ -1534,7 +1559,7 @@ var
   OriginalDie, AfterDie: TDie;
   RaisedEx: Boolean;
 begin
-  DieID := CreateAndSaveTestDie('DIE-TX-ROLL-001', 96, 98.0, 50.0, 3, 2);
+  DieID := CreateAndSaveTestDie('ZZTEST-TX-ROLL-001', 96, 98.0, 50.0, 3, 2);
   try
     OriginalDie := FDieService.GetDieByID(DieID);
 
@@ -1593,6 +1618,185 @@ begin
   Assert.AreEqual(3.600, GapRes.AroundGapMm, 0.001, 'Around gap mm must be 3.600');
   Assert.AreEqual(304.800, GapRes.CylinderRepeatMm, 0.001, 'Cylinder repeat mm must be 304.800');
   Assert.IsTrue(GapRes.Status in [gsOptimal, gsStandardApproved], 'Gap status must be approved');
+end;
+
+procedure TDieVixDieTests.Test50_WindowsUsernameCapturedAsDefaultActorAndAuditPreservedOnDelete;
+var
+  Die: TDie;
+  DieID: Integer;
+  ExpectedUser: string;
+  AuditList: TList<TDieAuditEntry>;
+  Qry: TFDQuery;
+  RetainedAuditCount: Integer;
+begin
+  ExpectedUser := GetCurrentAppUser;
+  Assert.IsTrue(ExpectedUser <> '', 'Expected Windows username must not be empty');
+
+  // 1. Create die without explicitly specifying actor
+  Die := TDie.CreateNew('ZZTEST-ACTOR-TEST-001', 96, 98.0, 50.0, 3, 2);
+  Die.CustomerID := FTestCustID;
+  Die.MediaID := FTestMediaID;
+  DieID := FDieService.SaveDie(Die);
+  try
+    Assert.IsTrue(DieID > 0, 'Die tooling record must be saved');
+
+    // 2. Assert CreatedBy and UpdatedBy match current Windows user
+    Die := FDieService.GetDieByID(DieID);
+    Assert.AreEqual(ExpectedUser, Die.CreatedBy, 'CreatedBy must capture current Windows user');
+    Assert.AreEqual(ExpectedUser, Die.UpdatedBy, 'UpdatedBy must capture current Windows user');
+
+    // 3. Assert initial CREATE audit record captures current Windows user
+    AuditList := FDieService.GetDieAuditHistory(DieID);
+    try
+      Assert.IsTrue(AuditList.Count > 0, 'Audit history must contain CREATE entry');
+      Assert.AreEqual(ExpectedUser, AuditList[0].ChangedBy, 'CREATE audit record ChangedBy must match Windows user');
+    finally
+      AuditList.Free;
+    end;
+
+    // 4. Change status with default actor parameter and verify audit
+    Assert.IsTrue(FDieService.ChangeDieStatus(DieID, 'REPAIR', 'Testing default actor propagation'));
+    AuditList := FDieService.GetDieAuditHistory(DieID);
+    try
+      Assert.AreEqual(ExpectedUser, AuditList[AuditList.Count - 1].ChangedBy, 'STATUS_CHANGE audit record ChangedBy must match Windows user');
+    finally
+      AuditList.Free;
+    end;
+  finally
+    // 5. Permanently delete the die
+    Assert.IsTrue(FDieService.PermanentlyDeleteDie(DieID, True), 'PermanentlyDeleteDie must succeed');
+  end;
+
+  // 6. Assert die is deleted from DIE table
+  Die := FDieService.GetDieByID(DieID);
+  Assert.AreEqual(0, Die.ID, 'Deleted die must no longer exist in DIE table');
+
+  // 7. Assert audit records still exist in DIE_AUDIT_LOG with original DIE_ID (Task B integrity)
+  Qry := TFDQuery.Create(nil);
+  try
+    Qry.Connection := FConn;
+    Qry.SQL.Text :=
+      'SELECT COUNT(*) FROM DIE_AUDIT_LOG ' +
+      'WHERE DIE_ID = :ID AND CHANGED_BY = :USER';
+    Qry.ParamByName('ID').AsInteger := DieID;
+    Qry.ParamByName('USER').AsString := ExpectedUser;
+    Qry.Open;
+    RetainedAuditCount := Qry.Fields[0].AsInteger;
+    Qry.Close;
+
+    Assert.IsTrue(RetainedAuditCount >= 2, Format('Audit entries (%d) must be retained with original DIE_ID after die deletion', [RetainedAuditCount]));
+  finally
+    Qry.Free;
+    FConn.ExecSQL('DELETE FROM DIE_AUDIT_LOG WHERE DIE_ID = ' + IntToStr(DieID));
+  end;
+end;
+
+procedure TDieVixDieTests.Test51_DeletingDiePreservesAuditRowsUnchanged;
+var
+  Die: TDie;
+  DieID: Integer;
+  AuditEntry: TDieAuditEntry;
+  LongDetails: string;
+  BeforeRows: TList<TDieAuditEntry>;
+  AfterRows: TList<TDieAuditEntry>;
+  I, J: Integer;
+  FoundPermDelete: Boolean;
+  PermDeleteEntry: TDieAuditEntry;
+  FoundMatch: Boolean;
+begin
+  // 1. Create a die
+  Die := TDie.CreateNew('ZZTEST-AUDIT-PRESERVE-01', 96, 98.0, 50.0, 3, 2);
+  Die.CustomerID := FTestCustID;
+  Die.MediaID := FTestMediaID;
+  DieID := FDieService.SaveDie(Die);
+  Assert.IsTrue(DieID > 0, 'Die tooling record must be saved');
+
+  // 2. Perform actions to generate multiple diverse audit rows
+  FDieService.ChangeDieStatus(DieID, 'REPAIR', 'Routine inspection');
+  FDieService.UpdateDieLocation(DieID, 'RACK-B', 'SHELF-02', 'BIN-05', 'Moved for staging');
+
+  // 3. Add an audit row with near-500-character DETAILS (490 chars)
+  LongDetails := StringOfChar('X', 490);
+  AuditEntry := TDieAuditEntry.CreateEntry(DieID, 'MAINTENANCE_NOTE', LongDetails);
+  AuditEntry.FieldName := 'NOTES';
+  AuditEntry.OldValue := 'None';
+  AuditEntry.NewValue := 'Maintenance scheduled';
+  Assert.IsTrue(FDieRepo.AddAuditEntry(AuditEntry));
+
+  // 4. Capture snapshot of all audit rows before deletion
+  BeforeRows := FDieRepo.GetAuditLog(DieID);
+  try
+    Assert.IsTrue(BeforeRows.Count >= 4, 'Must have at least 4 audit rows before delete');
+
+    // 5. Permanently delete the die (Task B requirement: no error with near-500 char details!)
+    Assert.IsTrue(FDieService.PermanentlyDeleteDie(DieID, True),
+      'PermanentlyDeleteDie must succeed without error even with near-500-char audit details');
+
+    // 6. Assert die is deleted from DIE table
+    Assert.AreEqual(0, FDieService.GetDieByID(DieID).ID, 'Die must no longer exist in DIE table');
+
+    // 7. Retrieve audit rows after deletion
+    AfterRows := FDieRepo.GetAuditLog(DieID);
+    try
+      // (a) Deleting a die leaves all its previous audit rows unchanged (compare before/after)
+      // AfterRows contains all BeforeRows PLUS the new PERMANENT_DELETE row
+      Assert.AreEqual(Integer(BeforeRows.Count) + 1, Integer(AfterRows.Count),
+        'Audit row count after delete must be exactly BeforeRows.Count + 1');
+
+      FoundPermDelete := False;
+      PermDeleteEntry := Default(TDieAuditEntry);
+      for I := 0 to AfterRows.Count - 1 do
+      begin
+        if AfterRows[I].Action = 'PERMANENT_DELETE' then
+        begin
+          FoundPermDelete := True;
+          PermDeleteEntry := AfterRows[I];
+        end;
+      end;
+
+      // (b) Assert PERMANENT_DELETE row exists, with correct DieID and serial number
+      Assert.IsTrue(FoundPermDelete, 'A PERMANENT_DELETE audit row must exist');
+      Assert.AreEqual(DieID, PermDeleteEntry.DieID, 'PERMANENT_DELETE row must have the original DieID');
+      Assert.IsTrue(Pos('ZZTEST-AUDIT-PRESERVE-01', PermDeleteEntry.Details) > 0,
+        'PERMANENT_DELETE row details must record the serial number');
+
+      // Verify that every single row that existed before deletion is 100% identical after deletion
+      for I := 0 to BeforeRows.Count - 1 do
+      begin
+        FoundMatch := False;
+        for J := 0 to AfterRows.Count - 1 do
+        begin
+          if AfterRows[J].ID = BeforeRows[I].ID then
+          begin
+            FoundMatch := True;
+            Assert.AreEqual(BeforeRows[I].DieID, AfterRows[J].DieID, 'DieID must remain original (not nulled)');
+            Assert.AreEqual(BeforeRows[I].Action, AfterRows[J].Action, 'Action must be unchanged');
+            Assert.AreEqual(BeforeRows[I].FieldName, AfterRows[J].FieldName, 'FieldName must be unchanged');
+            Assert.AreEqual(BeforeRows[I].OldValue, AfterRows[J].OldValue, 'OldValue must be unchanged');
+            Assert.AreEqual(BeforeRows[I].NewValue, AfterRows[J].NewValue, 'NewValue must be unchanged');
+            Assert.AreEqual(BeforeRows[I].Details, AfterRows[J].Details, 'Details must NOT have been modified');
+            Assert.AreEqual(BeforeRows[I].ChangedBy, AfterRows[J].ChangedBy, 'ChangedBy must be unchanged');
+            Break;
+          end;
+        end;
+        Assert.IsTrue(FoundMatch, Format('Before-deletion audit row ID %d must be found unchanged after deletion', [BeforeRows[I].ID]));
+      end;
+
+      // Also verify Task B.3 and Task H: GetAuditLog on deleted die displays serial directly from DIE_SERIAL_NO
+      Assert.AreEqual('ZZTEST-AUDIT-PRESERVE-01', PermDeleteEntry.SerialNumber,
+        'Deleted die audit entry must have serial number in SerialNumber field');
+      for I := 0 to AfterRows.Count - 1 do
+        Assert.AreEqual('ZZTEST-AUDIT-PRESERVE-01', AfterRows[I].SerialNumber,
+          'All audit entries after die deletion must preserve SerialNumber');
+
+    finally
+      AfterRows.Free;
+    end;
+  finally
+    BeforeRows.Free;
+    // Cleanup audit records for test die
+    FConn.ExecSQL('DELETE FROM DIE_AUDIT_LOG WHERE DIE_ID = ' + IntToStr(DieID));
+  end;
 end;
 
 initialization

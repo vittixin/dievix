@@ -1,7 +1,7 @@
 unit DieVix.Domain;
 
 {==============================================================================
-  DieVix – Rotary Die & Keyline Manager
+  DieVix - Rotary Die & Keyline Manager
   Domain Entities, Value Objects, and Repository Interfaces
 ==============================================================================}
 
@@ -67,7 +67,7 @@ type
     RepeatInch: Double;
     IsActive: Boolean;
     Notes: string;
-    class function CreateNew(ATeeth: Integer; APitchUm: Integer = 3175): TCylinder; static;
+    class function CreateNew(ATeeth: Integer; APitchUm: Integer = STANDARD_PITCH_UM): TCylinder; static;
   end;
 
   { Machine Entity }
@@ -157,6 +157,7 @@ type
   TDieAuditEntry = record
     ID: Integer;
     DieID: Integer;
+    SerialNumber: string;
     Action: string;
     FieldName: string;
     OldValue: string;
@@ -168,8 +169,112 @@ type
     class function CreateEntry(
       ADieID: Integer;
       const AAction, ADetails: string;
-      const AChangedBy: string = 'OPERATOR'
+      const AChangedBy: string = '';
+      const ASerialNo: string = ''
     ): TDieAuditEntry; static;
+  end;
+
+  { Flatbed Die Tooling Entity }
+  TFlatbedDie = record
+    ID: Integer;
+    SerialNo: string;
+    Description: string;
+    Category: string; // 'ROLL_FORM' or 'SHEET_FORM'
+    CustomerID: Integer;
+    CustomerName: string;
+    MediaID: Integer;
+    MediaName: string;
+    CustomerRef: string;
+    SupplierRef: string;
+    InternalRef: string;
+    AroundSizeMm: Double;
+    AcrossSizeMm: Double;
+    AroundUps: Integer;
+    AcrossUps: Integer;
+    TotalUps: Integer;
+    AroundGapMm: Double;
+    AcrossGapMm: Double;
+    CornerRadiusMm: Double;
+    Shape: string;
+    PlateWidthMm: Double;
+    PlateLengthMm: Double;
+    MaxFeedStrokeMm: Double;
+    TotalCutAroundMm: Double;
+    TotalCutAcrossMm: Double;
+    CanRotate: Boolean;
+    RotationSupport: string; // 'BI_DIRECTIONAL' or 'FIXED_DIRECTION'
+    StorageLocation: string;
+    StorageRack: string;
+    StorageShelf: string;
+    StorageBin: string;
+    StatusCode: string;
+    StatusName: string;
+    BadgeColor: string;
+    PurchaseDate: TDateTime;
+    ReceivedDate: TDateTime;
+    DieMaker: string;
+    TotalImpressions: Integer;
+    Notes: string;
+    Version: Integer;
+    CreatedBy: string;
+    UpdatedBy: string;
+    CreatedAt: TDateTime;
+    UpdatedAt: TDateTime;
+    class function CreateNew(
+      const ASerialNo, ACategory: string;
+      AAroundMm, AAcrossMm: Double;
+      AAroundUps: Integer = 1;
+      AAcrossUps: Integer = 1
+    ): TFlatbedDie; static;
+  end;
+
+  { Flatbed Die Audit Entry }
+  TFlatbedDieAuditEntry = record
+    ID: Integer;
+    FlatbedDieID: Integer;
+    DieSerialNo: string;
+    Action: string;
+    FieldName: string;
+    OldValue: string;
+    NewValue: string;
+    Details: string;
+    ChangedBy: string;
+    ChangedAt: TDateTime;
+    class function CreateEntry(
+      AFlatbedDieID: Integer;
+      const AAction, ADetails: string;
+      const AChangedBy: string = '';
+      const ASerialNo: string = ''
+    ): TFlatbedDieAuditEntry; static;
+  end;
+
+  { Flatbed Die Search / Filter Criteria }
+  TFlatbedDieSearchFilter = record
+    SearchText: string;
+    Category: string; // '', 'ROLL_FORM', 'SHEET_FORM'
+    CustomerID: Integer;
+    MediaID: Integer;
+    StatusCode: string;
+    Shape: string;
+    StorageLocation: string;
+    ActiveOnly: Boolean;
+    IncludeArchived: Boolean;
+    // Dimension matching
+    MatchDimensions: Boolean;
+    TargetAroundMm: Double;
+    TargetAcrossMm: Double;
+    ToleranceMm: Double;
+    AllowRotation: Boolean;
+    class function Default: TFlatbedDieSearchFilter; static;
+  end;
+
+  { Flatbed Die Search Result with rotation info }
+  TFlatbedDieSearchResult = record
+    Die: TFlatbedDie;
+    IsRotated: Boolean;
+    AroundDiffMm: Double;
+    AcrossDiffMm: Double;
+    MatchNote: string;
   end;
 
   { Die Search / Filter Criteria }
@@ -435,7 +540,55 @@ type
     function AddAuditEntry(const AEntry: TDieAuditEntry): Boolean;
   end;
 
+  IFlatbedDieRepository = interface
+    ['{B1001009-A101-4A01-8A01-000000000009}']
+    function GetAll: TList<TFlatbedDie>;
+    function GetByID(const AID: Integer): TFlatbedDie;
+    function GetBySerial(const ASerialNo: string): TFlatbedDie;
+    function Search(const AFilter: TFlatbedDieSearchFilter): TList<TFlatbedDie>;
+    function SearchMatchingDimensions(
+      const ATargetAroundMm, ATargetAcrossMm: Double;
+      const ACategory: string = '';
+      const AToleranceMm: Double = 0.500;
+      const AAllowRotation: Boolean = True;
+      const AActiveOnly: Boolean = True
+    ): TList<TFlatbedDieSearchResult>;
+    function Insert(var ADie: TFlatbedDie): Integer;
+    function Update(const ADie: TFlatbedDie): Boolean;
+    function Delete(const AID: Integer): Boolean;
+    function Archive(const AID: Integer; const AReason, AUser: string; const AExpectedVersion: Integer = 0): Boolean;
+    function Restore(const AID: Integer; const AReason, AUser: string; const AExpectedVersion: Integer = 0): Boolean;
+    function CanPermanentlyDelete(const AID: Integer; out ARefusalReason: string): Boolean;
+    function PermanentlyDelete(const AID: Integer): Boolean;
+    function SerialExists(const ASerialNo: string; const AExcludeID: Integer = 0): Boolean;
+    function ChangeStatus(const AID: Integer; const ANewStatusCode, AReason, AUser: string): Boolean;
+    function UpdateLocation(const AID: Integer; const ARack, AShelf, ABin, ANotes, AUser: string): Boolean;
+    function GetAuditLog(const AFlatbedDieID: Integer): TList<TFlatbedDieAuditEntry>;
+    function AddAuditEntry(const AEntry: TFlatbedDieAuditEntry): Boolean;
+  end;
+
+{ Current application/system actor helper }
+function GetCurrentAppUser: string;
+
 implementation
+
+uses
+  Winapi.Windows;
+
+function GetCurrentAppUser: string;
+var
+  Buffer: array[0..255] of Char;
+  BufSize: DWORD;
+begin
+  BufSize := Length(Buffer);
+  if Winapi.Windows.GetUserName(Buffer, BufSize) then
+    Result := Trim(Buffer)
+  else
+    Result := System.SysUtils.GetEnvironmentVariable('USERNAME');
+
+  if Result = '' then
+    Result := 'OPERATOR';
+end;
 
 { TCustomer }
 
@@ -507,7 +660,7 @@ begin
   FillChar(Result, SizeOf(Result), 0);
   Result.SerialNo := ASerialNo;
   Result.Teeth := ATeeth;
-  Result.PitchUm := 3175;
+  Result.PitchUm := STANDARD_PITCH_UM;
   Result.AroundSizeMm := AAroundMm;
   Result.AcrossSizeMm := AAcrossMm;
   Result.AroundUps := AAroundUps;
@@ -520,12 +673,12 @@ begin
   Result.StatusName := 'Active';
   Result.BadgeColor := 'Green';
   Result.Version := 1;
-  Result.CreatedBy := 'OPERATOR';
-  Result.UpdatedBy := 'OPERATOR';
+  Result.CreatedBy := GetCurrentAppUser;
+  Result.UpdatedBy := GetCurrentAppUser;
   Result.CreatedAt := Now;
   Result.UpdatedAt := Now;
-  Result.RepeatMm := (ATeeth * 3175) / 1000.0;
-  Result.RepeatInch := ATeeth / 8.0;
+  Result.RepeatMm := TeethToRepeatMm(ATeeth, STANDARD_PITCH_UM);
+  Result.RepeatInch := TeethToRepeatInch(ATeeth);
   if AAroundUps > 0 then
     Result.AroundGapMm := (Result.RepeatMm - (AAroundUps * AAroundMm)) / AAroundUps
   else
@@ -537,15 +690,99 @@ end;
 class function TDieAuditEntry.CreateEntry(
   ADieID: Integer;
   const AAction, ADetails: string;
-  const AChangedBy: string
+  const AChangedBy: string;
+  const ASerialNo: string
 ): TDieAuditEntry;
 begin
   FillChar(Result, SizeOf(Result), 0);
   Result.DieID := ADieID;
+  Result.SerialNumber := Trim(ASerialNo);
   Result.Action := AAction;
   Result.Details := ADetails;
-  Result.ChangedBy := AChangedBy;
+  if Trim(AChangedBy) <> '' then
+    Result.ChangedBy := Trim(AChangedBy)
+  else
+    Result.ChangedBy := GetCurrentAppUser;
   Result.ChangedAt := Now;
+end;
+
+{ TFlatbedDie }
+
+class function TFlatbedDie.CreateNew(
+  const ASerialNo, ACategory: string;
+  AAroundMm, AAcrossMm: Double;
+  AAroundUps, AAcrossUps: Integer
+): TFlatbedDie;
+begin
+  FillChar(Result, SizeOf(Result), 0);
+  Result.SerialNo := ASerialNo;
+  Result.Category := ACategory;
+  Result.AroundSizeMm := AAroundMm;
+  Result.AcrossSizeMm := AAcrossMm;
+  Result.AroundUps := AAroundUps;
+  Result.AcrossUps := AAcrossUps;
+  Result.TotalUps := AAroundUps * AAcrossUps;
+  Result.AroundGapMm := 3.000;
+  Result.AcrossGapMm := 3.000;
+  Result.CornerRadiusMm := 2.000;
+  Result.Shape := 'RECTANGLE';
+  Result.TotalCutAroundMm := (AAroundUps * AAroundMm) + ((AAroundUps - 1) * 3.000);
+  Result.TotalCutAcrossMm := (AAcrossUps * AAcrossMm) + ((AAcrossUps - 1) * 3.000);
+  Result.CanRotate := CanFlatbedDieRotate(ACategory, AAroundUps, AAcrossUps, AAroundMm, AAcrossMm);
+  if Result.CanRotate then
+    Result.RotationSupport := 'BI_DIRECTIONAL'
+  else
+    Result.RotationSupport := 'FIXED_DIRECTION';
+  Result.StatusCode := 'ACTIVE';
+  Result.StatusName := 'Active';
+  Result.BadgeColor := 'Green';
+  Result.Version := 1;
+  Result.CreatedBy := GetCurrentAppUser;
+  Result.UpdatedBy := GetCurrentAppUser;
+  Result.CreatedAt := Now;
+  Result.UpdatedAt := Now;
+end;
+
+{ TFlatbedDieAuditEntry }
+
+class function TFlatbedDieAuditEntry.CreateEntry(
+  AFlatbedDieID: Integer;
+  const AAction, ADetails: string;
+  const AChangedBy: string;
+  const ASerialNo: string
+): TFlatbedDieAuditEntry;
+begin
+  FillChar(Result, SizeOf(Result), 0);
+  Result.FlatbedDieID := AFlatbedDieID;
+  Result.DieSerialNo := Trim(ASerialNo);
+  Result.Action := AAction;
+  Result.Details := ADetails;
+  if Trim(AChangedBy) <> '' then
+    Result.ChangedBy := Trim(AChangedBy)
+  else
+    Result.ChangedBy := GetCurrentAppUser;
+  Result.ChangedAt := Now;
+end;
+
+{ TFlatbedDieSearchFilter }
+
+class function TFlatbedDieSearchFilter.Default: TFlatbedDieSearchFilter;
+begin
+  FillChar(Result, SizeOf(Result), 0);
+  Result.SearchText := '';
+  Result.Category := '';
+  Result.CustomerID := 0;
+  Result.MediaID := 0;
+  Result.StatusCode := '';
+  Result.Shape := '';
+  Result.StorageLocation := '';
+  Result.ActiveOnly := False;
+  Result.IncludeArchived := False;
+  Result.MatchDimensions := False;
+  Result.TargetAroundMm := 0.0;
+  Result.TargetAcrossMm := 0.0;
+  Result.ToleranceMm := 0.500;
+  Result.AllowRotation := True;
 end;
 
 { TDieSearchFilter }
@@ -617,7 +854,7 @@ begin
   Result.CornerRadiusMm := 2.000;
   Result.MediaID := 0;
   Result.ActiveCylindersOnly := True;
-  Result.PitchUm := 3175;
+  Result.PitchUm := STANDARD_PITCH_UM;
 end;
 
 function KeylineCategoryToString(const ACat: TKeylineRecommendationCategory): string;

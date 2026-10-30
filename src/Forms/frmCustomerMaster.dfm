@@ -1,7 +1,7 @@
 object frmCustomerMaster: TfrmCustomerMaster
   Left = 0
   Top = 0
-  Caption = 'Customer Master — DieVix'
+  Caption = 'Customer Master - DieVix'
   ClientHeight = 540
   ClientWidth = 820
   Color = clBtnFace

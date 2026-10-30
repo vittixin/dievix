@@ -1,7 +1,7 @@
 unit DieVix.MasterDataService;
 
 {==============================================================================
-  DieVix – Rotary Die & Keyline Manager
+  DieVix - Rotary Die & Keyline Manager
   Master Data Application Service
   Orchestrates business validation, referential integrity guards, and transactions.
 ==============================================================================}
@@ -333,12 +333,12 @@ end;
 
 function TMasterDataService.GetMinAroundGapUm: Int64;
 begin
-  Result := FSettingRepo.GetInt('MIN_AROUND_GAP_UM', 3000);
+  Result := FSettingRepo.GetInt('MIN_AROUND_GAP_UM', DEFAULT_MIN_GAP_UM);
 end;
 
 function TMasterDataService.GetHardBlockGapUm: Int64;
 begin
-  Result := FSettingRepo.GetInt('HARD_BLOCK_GAP_UM', 0);
+  Result := FSettingRepo.GetInt('HARD_BLOCK_GAP_UM', DEFAULT_HARD_BLOCK_GAP_UM);
 end;
 
 function TMasterDataService.GetDefaultAcrossGapMm: Double;

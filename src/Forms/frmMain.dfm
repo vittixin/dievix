@@ -1,7 +1,7 @@
 object frmMain: TfrmMain
   Left = 0
   Top = 0
-  Caption = 'DieVix — Rotary Die & Keyline Manager'
+  Caption = 'DieVix - Rotary Die & Keyline Manager'
   ClientHeight = 620
   ClientWidth = 1000
   Color = clBtnFace
@@ -67,7 +67,7 @@ object frmMain: TfrmMain
       Top = 15
       Width = 176
       Height = 36
-      Caption = '  '#9733' Die Tooling Register'
+      Caption = '  '#9733' Rotary Die Register'
       Font.Charset = DEFAULT_CHARSET
       Font.Color = clWindowText
       Font.Height = -12
@@ -77,9 +77,24 @@ object frmMain: TfrmMain
       TabOrder = 0
       OnClick = btnDieRegisterClick
     end
-    object btnKeylineCalc: TButton
+    object btnFlatbedRegister: TButton
       Left = 12
       Top = 56
+      Width = 176
+      Height = 36
+      Caption = '  '#9638' Flatbed Die Register'
+      Font.Charset = DEFAULT_CHARSET
+      Font.Color = clWindowText
+      Font.Height = -12
+      Font.Name = 'Segoe UI Semibold'
+      Font.Style = []
+      ParentFont = False
+      TabOrder = 1
+      OnClick = btnFlatbedRegisterClick
+    end
+    object btnKeylineCalc: TButton
+      Left = 12
+      Top = 97
       Width = 176
       Height = 36
       Caption = '  '#9889' Keyline Calculator'
@@ -89,71 +104,86 @@ object frmMain: TfrmMain
       Font.Name = 'Segoe UI Semibold'
       Font.Style = []
       ParentFont = False
-      TabOrder = 1
+      TabOrder = 2
       OnClick = btnKeylineCalcClick
     end
     object btnCylinders: TButton
       Left = 12
-      Top = 97
+      Top = 138
       Width = 176
       Height = 36
       Caption = '  Cylinder Master'
-      TabOrder = 2
+      TabOrder = 3
       OnClick = btnCylindersClick
     end
     object btnMachines: TButton
       Left = 12
-      Top = 138
+      Top = 179
       Width = 176
       Height = 36
       Caption = '  Machine Master'
-      TabOrder = 3
+      TabOrder = 4
       OnClick = btnMachinesClick
     end
     object btnMatrix: TButton
       Left = 12
-      Top = 179
+      Top = 220
       Width = 176
       Height = 36
       Caption = '  Machine '#215' Cylinders'
-      TabOrder = 4
+      TabOrder = 5
       OnClick = btnMatrixClick
     end
     object btnCustomers: TButton
       Left = 12
-      Top = 220
+      Top = 261
       Width = 176
       Height = 36
       Caption = '  Customer Master'
-      TabOrder = 5
+      TabOrder = 6
       OnClick = btnCustomersClick
     end
     object btnMedia: TButton
       Left = 12
-      Top = 261
+      Top = 302
       Width = 176
       Height = 36
       Caption = '  Media Substrates'
-      TabOrder = 6
+      TabOrder = 7
       OnClick = btnMediaClick
     end
     object btnStatuses: TButton
       Left = 12
-      Top = 302
+      Top = 343
       Width = 176
       Height = 36
       Caption = '  Die Status Codes'
-      TabOrder = 7
+      TabOrder = 8
       OnClick = btnStatusesClick
     end
     object btnSettings: TButton
       Left = 12
-      Top = 343
+      Top = 384
       Width = 176
       Height = 36
       Caption = '  Settings & Tolerances'
-      TabOrder = 8
+      TabOrder = 9
       OnClick = btnSettingsClick
+    end
+    object btnBackup: TButton
+      Left = 12
+      Top = 425
+      Width = 176
+      Height = 36
+      Caption = '  '#128452' Backup & Restore'
+      Font.Charset = DEFAULT_CHARSET
+      Font.Color = clWindowText
+      Font.Height = -12
+      Font.Name = 'Segoe UI Semibold'
+      Font.Style = []
+      ParentFont = False
+      TabOrder = 10
+      OnClick = btnBackupClick
     end
   end
   object pnlContent: TPanel
@@ -383,7 +413,7 @@ object frmMain: TfrmMain
         Top = 55
         Width = 220
         Height = 45
-        Caption = '★ Open Die Tooling Register'
+        Caption = '  '#9733' Open Die Tooling Register'
         Font.Charset = DEFAULT_CHARSET
         Font.Color = clWindowText
         Font.Height = -12
@@ -443,6 +473,36 @@ object frmMain: TfrmMain
         ParentFont = False
         TabOrder = 5
         OnClick = btnKeylineCalcClick
+      end
+      object btnQuickBackup: TButton
+        Left = 20
+        Top = 170
+        Width = 220
+        Height = 40
+        Caption = '  '#128452' Database & Report Backup'
+        Font.Charset = DEFAULT_CHARSET
+        Font.Color = clWindowText
+        Font.Height = -12
+        Font.Name = 'Segoe UI Semibold'
+        Font.Style = []
+        ParentFont = False
+        TabOrder = 6
+        OnClick = btnBackupClick
+      end
+      object btnQuickFlatbed: TButton
+        Left = 260
+        Top = 170
+        Width = 220
+        Height = 40
+        Caption = '  '#9638' Open Flatbed Die Register'
+        Font.Charset = DEFAULT_CHARSET
+        Font.Color = clWindowText
+        Font.Height = -12
+        Font.Name = 'Segoe UI Semibold'
+        Font.Style = []
+        ParentFont = False
+        TabOrder = 7
+        OnClick = btnFlatbedRegisterClick
       end
     end
   end

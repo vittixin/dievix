@@ -1,7 +1,7 @@
 unit frmKeylineCalculator;
 
 {==============================================================================
-  DieVix – Rotary Die & Keyline Manager
+  DieVix - Rotary Die & Keyline Manager
   Keyline Calculator & Rotary Layout Designer Form
   Implements Phase 4:
   - Exact integer-micrometre rotary repeat calculations
@@ -444,7 +444,7 @@ begin
   Input.CornerRadiusMm := ValRadius;
   Input.MediaID := 0;
   Input.ActiveCylindersOnly := chkActiveCylinders.Checked;
-  Input.PitchUm := 3175;
+  Input.PitchUm := STANDARD_PITCH_UM;
 
   FCurrentInput := Input;
   FCurrentResult := FKeylineService.Calculate(FCurrentInput);

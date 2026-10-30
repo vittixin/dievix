@@ -1,7 +1,7 @@
 unit frmSettings;
 
 {==============================================================================
-  DieVix – Rotary Die & Keyline Manager
+  DieVix - Rotary Die & Keyline Manager
   Application Settings Form
 ==============================================================================}
 
@@ -10,7 +10,9 @@ interface
 uses
   Winapi.Windows, Winapi.Messages, System.SysUtils, System.Variants, System.Classes,
   Vcl.Graphics, Vcl.Controls, Vcl.Forms, Vcl.Dialogs, Vcl.StdCtrls, Vcl.ExtCtrls,
-  DieVix.MasterDataService;
+  DieVix.CalculationEngine,
+  DieVix.MasterDataService,
+  frmBackup;
 
 type
   TfrmSettings = class(TForm)
@@ -35,12 +37,16 @@ type
     lblPitch: TLabel;
     edtPitchUm: TEdit;
     lblPitchHelp: TLabel;
+    grpBackup: TGroupBox;
+    lblBackupHelp: TLabel;
+    btnOpenBackupManager: TButton;
     pnlButtons: TPanel;
     btnSave: TButton;
     btnCancel: TButton;
     procedure FormCreate(Sender: TObject);
     procedure btnSaveClick(Sender: TObject);
     procedure btnCancelClick(Sender: TObject);
+    procedure btnOpenBackupManagerClick(Sender: TObject);
   private
     FService: TMasterDataService;
     procedure LoadSettings;
@@ -73,7 +79,7 @@ begin
   AcrossGap := FService.GetDefaultAcrossGapMm;
   Radius := FService.GetDefaultCornerRadiusMm;
   Margin := FService.SettingRepo.GetFloat('DEFAULT_EDGE_MARGIN_MM', 5.0);
-  Pitch := FService.SettingRepo.GetInt('STANDARD_PITCH_UM', 3175);
+  Pitch := FService.SettingRepo.GetInt('STANDARD_PITCH_UM', STANDARD_PITCH_UM);
 
   edtMinGapMm.Text := FormatFloat('0.000', MinGapUm / 1000.0);
   edtHardBlockMm.Text := FormatFloat('0.000', HardBlockUm / 1000.0);
@@ -89,12 +95,12 @@ var
   AcrossGap, Radius, Margin: Double;
   Pitch: Integer;
 begin
-  MinGapUm := Round(StrToFloatDef(Trim(edtMinGapMm.Text), 3.0) * 1000.0);
-  HardBlockUm := Round(StrToFloatDef(Trim(edtHardBlockMm.Text), 0.0) * 1000.0);
+  MinGapUm := MmToUm(StrToFloatDef(Trim(edtMinGapMm.Text), DEFAULT_MIN_GAP_MM));
+  HardBlockUm := MmToUm(StrToFloatDef(Trim(edtHardBlockMm.Text), 0.0));
   AcrossGap := StrToFloatDef(Trim(edtAcrossGapMm.Text), 3.0);
   Radius := StrToFloatDef(Trim(edtCornerRadiusMm.Text), 2.0);
   Margin := StrToFloatDef(Trim(edtMarginMm.Text), 5.0);
-  Pitch := StrToIntDef(Trim(edtPitchUm.Text), 3175);
+  Pitch := StrToIntDef(Trim(edtPitchUm.Text), STANDARD_PITCH_UM);
 
   try
     FService.SaveSettings(MinGapUm, HardBlockUm, AcrossGap, Radius);
@@ -112,6 +118,18 @@ end;
 procedure TfrmSettings.btnCancelClick(Sender: TObject);
 begin
   Close;
+end;
+
+procedure TfrmSettings.btnOpenBackupManagerClick(Sender: TObject);
+var
+  Dlg: TfrmBackup;
+begin
+  Dlg := TfrmBackup.Create(Self);
+  try
+    Dlg.ShowModal;
+  finally
+    Dlg.Free;
+  end;
 end;
 
 end.

@@ -1,7 +1,7 @@
 unit frmMediaMaster;
 
 {==============================================================================
-  DieVix – Rotary Die & Keyline Manager
+  DieVix - Rotary Die & Keyline Manager
   Media / Substrate Master Form (Standardized Face & Liner Layers)
 ==============================================================================}
 
@@ -154,7 +154,7 @@ begin
     if M.TotalCaliperUm > 0 then
       gridMedia.Cells[5, Row + 1] := IntToStr(M.TotalCaliperUm)
     else
-      gridMedia.Cells[5, Row + 1] := '—';
+      gridMedia.Cells[5, Row + 1] := '-';
     if M.IsActive then
       gridMedia.Cells[6, Row + 1] := 'Active'
     else

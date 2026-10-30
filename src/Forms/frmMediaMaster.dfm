@@ -1,7 +1,7 @@
 object frmMediaMaster: TfrmMediaMaster
   Left = 0
   Top = 0
-  Caption = 'Media Substrate Master — DieVix'
+  Caption = 'Media Substrate Master - DieVix'
   ClientHeight = 540
   ClientWidth = 840
   Color = clBtnFace

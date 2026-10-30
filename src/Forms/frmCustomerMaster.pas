@@ -1,7 +1,7 @@
 unit frmCustomerMaster;
 
 {==============================================================================
-  DieVix – Rotary Die & Keyline Manager
+  DieVix - Rotary Die & Keyline Manager
   Customer Master Form
 ==============================================================================}
 

@@ -1,4 +1,4 @@
-# DieVix – Rotary Die & Keyline Manager
+# DieVix - Rotary Die & Keyline Manager
 ## Application Design Specification & Architecture Blueprint
 **Version:** 1.0  
 **Target Platform:** Windows 11 Desktop (Delphi 12.2 Athens VCL)  

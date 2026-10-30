@@ -1,7 +1,7 @@
 unit DieVixCalculatorTests;
 
 {==============================================================================
-  DieVix – Rotary Die & Keyline Manager
+  DieVix - Rotary Die & Keyline Manager
   DUnitX Test Suite: Phase 4 Keyline Calculator & Cylinder Optimization
   Validates pure integer-micrometre rotary geometry, machine web-fit,
   cylinder fleet recommendations, die reuse, and draft die creation.
@@ -12,6 +12,7 @@ interface
 uses
   System.SysUtils,
   System.Classes,
+  System.IOUtils,
   System.Generics.Collections,
   DUnitX.TestFramework,
   FireDAC.Comp.Client,
@@ -152,7 +153,6 @@ implementation
 procedure TDieVixCalculatorTests.SetupFixture;
 var
   Mgr: TDieVixConnectionManager;
-  Cfg: TDatabaseConfig;
   AppCount: Integer;
   LogStr: string;
   Cust: TCustomer;
@@ -160,15 +160,12 @@ var
   Mach: TMachine;
 begin
   Mgr := TDieVixConnectionManager.Instance;
-  Cfg := TDatabaseConfig.DefaultServer;
-  Cfg.Database := 'D:\ketan\github\DieVix\tmp\dievix_disposable_test.fdb';
-  Cfg.UserName := 'SYSDBA';
-  Cfg.Password := 'masterkey';
-  Cfg.VendorLib := 'C:\Program Files (x86)\Firebird\Firebird_5_0\fbclient.dll';
-  Mgr.Config := Cfg;
-
   FConn := Mgr.GetConnection;
-  Mgr.ApplyMigrations('D:\ketan\github\DieVix\migrations', AppCount, LogStr);
+  Mgr.ApplyMigrations(TPath.GetFullPath(TPath.Combine(ExtractFilePath(ParamStr(0)), '..\migrations')), AppCount, LogStr);
+
+  // Clean up any test dies from previous interrupted runs to ensure test hygiene
+  FConn.ExecSQL('DELETE FROM DIE_AUDIT_LOG WHERE DIE_ID IN (SELECT ID FROM DIE WHERE SERIAL_NO LIKE ''ZZTEST-%'' OR CUSTOMER_ID IN (SELECT ID FROM CUSTOMER WHERE CODE = ''ZZTEST_CUST_PH4''))');
+  FConn.ExecSQL('DELETE FROM DIE WHERE SERIAL_NO LIKE ''ZZTEST-%'' OR CUSTOMER_ID IN (SELECT ID FROM CUSTOMER WHERE CODE = ''ZZTEST_CUST_PH4'')');
 
   FCustomerRepo := TCustomerRepository.Create(FConn);
   FMediaRepo := TMediaRepository.Create(FConn);
@@ -191,17 +188,35 @@ begin
     FCylinderRepo, FMachineRepo, FMachineCylinderRepo, FDieRepo, FSettingRepo
   );
 
-  // Setup test customer, media, and machine
-  Cust := TCustomer.CreateNew('TEST-CUST-PH4', 'Phase 4 Calculator Test Customer');
-  FTestCustID := FCustomerRepo.Insert(Cust);
+  // Setup test customer, media, and machine (reuse if present from interrupted runs)
+  Cust := FCustomerRepo.GetByCode('ZZTEST_CUST_PH4');
+  if Cust.ID > 0 then
+    FTestCustID := Cust.ID
+  else
+  begin
+    Cust := TCustomer.CreateNew('ZZTEST_CUST_PH4', 'Phase 4 Calculator Test Customer');
+    FTestCustID := FCustomerRepo.Insert(Cust);
+  end;
 
-  Med := TMedia.CreateNew('TEST-MED-PH4', 'Phase 4 Test Substrate');
-  FTestMediaID := FMediaRepo.Insert(Med);
+  Med := FMediaRepo.GetByCode('ZZTEST_MED_PH4');
+  if Med.ID > 0 then
+    FTestMediaID := Med.ID
+  else
+  begin
+    Med := TMedia.CreateNew('ZZTEST_MED_PH4', 'Phase 4 Test Substrate');
+    FTestMediaID := FMediaRepo.Insert(Med);
+  end;
 
-  Mach := TMachine.CreateNew('TEST-MACH-PH4', 'Phase 4 Test Press 250mm', 250.0);
-  Mach.MinWebWidthMm := 50.0;
-  Mach.DefaultMarginMm := 5.0;
-  FTestMachID := FMachineRepo.Insert(Mach);
+  Mach := FMachineRepo.GetByCode('ZZTEST_MACH_PH4');
+  if Mach.ID > 0 then
+    FTestMachID := Mach.ID
+  else
+  begin
+    Mach := TMachine.CreateNew('ZZTEST_MACH_PH4', 'Phase 4 Test Press 250mm', 250.0);
+    Mach.MinWebWidthMm := 50.0;
+    Mach.DefaultMarginMm := 5.0;
+    FTestMachID := FMachineRepo.Insert(Mach);
+  end;
 
   // Assign cylinders 66T, 72T, 96T, 98T, 112T to this test press
   FMachineCylinderRepo.AssignCylinder(FTestMachID, 66);
@@ -213,6 +228,15 @@ end;
 
 procedure TDieVixCalculatorTests.TearDownFixture;
 begin
+  if Assigned(FConn) and FConn.Connected then
+  begin
+    try
+      FConn.ExecSQL('DELETE FROM DIE_AUDIT_LOG WHERE DIE_ID IN (SELECT ID FROM DIE WHERE SERIAL_NO LIKE ''ZZTEST-%'' OR CUSTOMER_ID IN (SELECT ID FROM CUSTOMER WHERE CODE = ''ZZTEST_CUST_PH4''))');
+      FConn.ExecSQL('DELETE FROM DIE WHERE SERIAL_NO LIKE ''ZZTEST-%'' OR CUSTOMER_ID IN (SELECT ID FROM CUSTOMER WHERE CODE = ''ZZTEST_CUST_PH4'')');
+    except
+    end;
+  end;
+
   if FTestMachID > 0 then
     FMachineRepo.Delete(FTestMachID);
   if FTestCustID > 0 then
@@ -576,7 +600,7 @@ var
   I: Integer;
 begin
   // Insert an existing die on 98T: 150.0 x 100.0 mm, 2 ups
-  TestDie := TDie.CreateNew('DIE-CALC-MATCH-01', 98, 150.0, 100.0, 2, 1);
+  TestDie := TDie.CreateNew('ZZTEST-CALC-MATCH-01', 98, 150.0, 100.0, 2, 1);
   TestDie.CustomerID := FTestCustID;
   TestDie.MediaID := FTestMediaID;
   DieID := FDieService.SaveDie(TestDie);
@@ -614,8 +638,8 @@ var
 begin
   // Candidate A: Around diff 0.1 mm, Across diff 0.8 mm
   // Candidate B: Around diff 0.5 mm, Across diff 0.05 mm
-  DieA := TDie.CreateNew('DIE-CALC-PRIO-A', 98, 150.100, 100.800, 2, 1);
-  DieB := TDie.CreateNew('DIE-CALC-PRIO-B', 98, 150.500, 100.050, 2, 1);
+  DieA := TDie.CreateNew('ZZTEST-CALC-PRIO-A', 98, 150.100, 100.800, 2, 1);
+  DieB := TDie.CreateNew('ZZTEST-CALC-PRIO-B', 98, 150.500, 100.050, 2, 1);
   DieA.CustomerID := FTestCustID;
   DieB.CustomerID := FTestCustID;
   DieA.MediaID := FTestMediaID;
@@ -629,8 +653,8 @@ begin
       IdxB := -1;
       for I := 0 to Matches.Count - 1 do
       begin
-        if Matches[I].Die.SerialNo = 'DIE-CALC-PRIO-A' then IdxA := I;
-        if Matches[I].Die.SerialNo = 'DIE-CALC-PRIO-B' then IdxB := I;
+        if Matches[I].Die.SerialNo = 'ZZTEST-CALC-PRIO-A' then IdxA := I;
+        if Matches[I].Die.SerialNo = 'ZZTEST-CALC-PRIO-B' then IdxB := I;
       end;
 
       Assert.IsTrue(IdxA >= 0, 'Candidate A must be found');
@@ -654,7 +678,7 @@ var
   I: Integer;
 begin
   // Across size 108.0 mm (> 100.0 + 2.0 mm tolerance) -> Slitting candidate
-  TestDie := TDie.CreateNew('DIE-CALC-SLIT-01', 98, 150.0, 108.0, 2, 1);
+  TestDie := TDie.CreateNew('ZZTEST-CALC-SLIT-01', 98, 150.0, 108.0, 2, 1);
   TestDie.CustomerID := FTestCustID;
   TestDie.MediaID := FTestMediaID;
   DieID := FDieService.SaveDie(TestDie);
@@ -664,7 +688,7 @@ begin
       FoundSlit := False;
       for I := 0 to Matches.Count - 1 do
       begin
-        if Matches[I].Die.SerialNo = 'DIE-CALC-SLIT-01' then
+        if Matches[I].Die.SerialNo = 'ZZTEST-CALC-SLIT-01' then
         begin
           Assert.AreEqual(sdmSlittingCandidate, Matches[I].MatchClass, 'Must be classified as sdmSlittingCandidate');
           Assert.IsTrue(Pos('REVIEW REQUIRED', UpperCase(Matches[I].ReusabilityNote)) > 0, 'Reusability note must indicate review is required');
@@ -688,7 +712,7 @@ var
   FoundScrap: Boolean;
   I: Integer;
 begin
-  TestDie := TDie.CreateNew('DIE-CALC-SCRAP-01', 98, 150.0, 100.0, 2, 1);
+  TestDie := TDie.CreateNew('ZZTEST-CALC-SCRAP-01', 98, 150.0, 100.0, 2, 1);
   TestDie.CustomerID := FTestCustID;
   TestDie.MediaID := FTestMediaID;
   TestDie.StatusCode := 'SCRAPPED';
@@ -698,7 +722,7 @@ begin
     try
       FoundScrap := False;
       for I := 0 to Matches.Count - 1 do
-        if Matches[I].Die.SerialNo = 'DIE-CALC-SCRAP-01' then FoundScrap := True;
+        if Matches[I].Die.SerialNo = 'ZZTEST-CALC-SCRAP-01' then FoundScrap := True;
       Assert.IsFalse(FoundScrap, 'Scrapped die must be excluded from reusable die lookup');
     finally
       Matches.Free;
@@ -775,6 +799,7 @@ begin
   Rec.AroundUps := 2;
 
   DraftDie := FKeylineService.CreateDraftDie(Rec, Input, FTestCustID);
+  DraftDie.SerialNo := 'ZZTEST-DRAFT-25';
   DraftDie.MediaID := FTestMediaID;
   SavedID := FDieService.SaveDie(DraftDie, 'KEYLINE_OP');
   try
@@ -789,7 +814,7 @@ begin
       AuditList.Free;
     end;
   finally
-    FDieService.DeleteDie(SavedID);
+    FDieService.PermanentlyDeleteDie(SavedID, True);
   end;
 end;
 
@@ -807,6 +832,7 @@ begin
   Rec.AroundUps := 2;
 
   DraftDie := FKeylineService.CreateDraftDie(Rec, Input, FTestCustID);
+  DraftDie.SerialNo := 'ZZTEST-DRAFT-26';
   DraftDie.MediaID := FTestMediaID;
   SavedID := FDieService.SaveDie(DraftDie, 'KEYLINE_OP');
   try
@@ -817,7 +843,7 @@ begin
     Assert.AreEqual(5.575, ReopenedDie.AroundGapMm, 0.001, 'Reopened around gap must match (5.575 mm)');
     Assert.AreEqual(311.150, ReopenedDie.RepeatMm, 0.001, 'Reopened repeat mm must match');
   finally
-    FDieService.DeleteDie(SavedID);
+    FDieService.PermanentlyDeleteDie(SavedID, True);
   end;
 end;
 
@@ -828,7 +854,7 @@ var
 begin
   Input := TKeylineInput.CreateDefault(-50.0, 0.0);
   ResultData := FKeylineService.Calculate(Input);
-  Assert.AreEqual(0, Length(ResultData.Recommendations), 'Invalid zero or negative dimensions must return 0 recommendations');
+  Assert.AreEqual(0, Integer(Length(ResultData.Recommendations)), 'Invalid zero or negative dimensions must return 0 recommendations');
 end;
 
 procedure TDieVixCalculatorTests.Test28_NoDuplicateGeometryCalculations;

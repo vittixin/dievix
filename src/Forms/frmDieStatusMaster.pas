@@ -1,7 +1,7 @@
 unit frmDieStatusMaster;
 
 {==============================================================================
-  DieVix – Rotary Die & Keyline Manager
+  DieVix - Rotary Die & Keyline Manager
   Die Status Master Form
 ==============================================================================}
 

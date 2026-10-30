@@ -1,7 +1,7 @@
 unit DieVix.ConnectionManager;
 
 {==============================================================================
-  DieVix – Rotary Die & Keyline Manager
+  DieVix - Rotary Die & Keyline Manager
   FireDAC Database Connection Manager for Firebird 5.0
   Supports:
     - Server Mode (Multi-user LAN via TCP/IP)
@@ -16,6 +16,7 @@ uses
   System.IniFiles,
   System.IOUtils,
   System.Generics.Collections,
+  System.Generics.Defaults,
   FireDAC.Comp.Client,
   FireDAC.Comp.UI,
   FireDAC.Comp.Script,
@@ -58,6 +59,7 @@ type
   TDieVixConnectionManager = class
   private
     class var FInstance: TDieVixConnectionManager;
+    class var FDefaultIniFileName: string;
   private
     FConfig: TDatabaseConfig;
     FConnection: TFDConnection;
@@ -75,6 +77,9 @@ type
     class procedure ReleaseInstance;
     class function IsWaitCursorRegistered: Boolean;
 
+    class procedure SetDefaultIniFileName(const AFileName: string);
+    class function GetDefaultIniFileName: string;
+
     procedure LoadFromIni(const APath: string = '');
     procedure SaveToIni(const APath: string = '');
 
@@ -88,7 +93,12 @@ type
     property Config: TDatabaseConfig read FConfig write FConfig;
     property IniPath: string read FIniPath write FIniPath;
     property WaitCursor: TFDGUIxWaitCursor read FWaitCursor;
+    property DriverLink: TFDPhysFBDriverLink read FDriverLink;
   end;
+
+{ Pure safety guard for test database paths }
+function IsSafeTestDatabasePath(const ATestDbPath, AAppIniPath: string; out AReason: string): Boolean; overload;
+function IsSafeTestDatabasePath(const ATestDbPath, AAppIniPath: string): Boolean; overload;
 
 implementation
 
@@ -101,8 +111,8 @@ begin
   Result.Port := 3050;
   Result.Database := 'DIEVIX.FDB';
   Result.UserName := 'SYSDBA';
-  Result.Password := 'masterkey';
-  Result.VendorLib := 'C:\Program Files (x86)\Firebird\Firebird_5_0\fbclient.dll';
+  Result.Password := '';
+  Result.VendorLib := 'C:\Program Files\Firebird\Firebird_5_0\fbclient.dll';
   Result.CharSet := 'UTF8';
   Result.ConnectionTimeoutSec := 15;
 end;
@@ -114,7 +124,7 @@ begin
   Result.Port := 0;
   Result.Database := 'DIEVIX.FDB';
   Result.UserName := 'SYSDBA';
-  Result.Password := 'masterkey';
+  Result.Password := '';
   Result.VendorLib := 'fbclient.dll';
   Result.CharSet := 'UTF8';
   Result.ConnectionTimeoutSec := 15;
@@ -122,15 +132,40 @@ end;
 
 { TDieVixConnectionManager }
 
+class procedure TDieVixConnectionManager.SetDefaultIniFileName(const AFileName: string);
+begin
+  FDefaultIniFileName := AFileName;
+end;
+
+class function TDieVixConnectionManager.GetDefaultIniFileName: string;
+begin
+  Result := FDefaultIniFileName;
+end;
+
 constructor TDieVixConnectionManager.Create;
+var
+  TargetIniName: string;
 begin
   inherited Create;
   FConfig := TDatabaseConfig.DefaultServer;
-  FIniPath := TPath.Combine(ExtractFilePath(ParamStr(0)), 'DieVix.ini');
-  if not FileExists(FIniPath) and FileExists(TPath.Combine(ExtractFilePath(ParamStr(0)), '..\DieVix.ini')) then
-    FIniPath := TPath.GetFullPath(TPath.Combine(ExtractFilePath(ParamStr(0)), '..\DieVix.ini'))
-  else if not FileExists(FIniPath) and FileExists('DieVix.ini') then
-    FIniPath := TPath.GetFullPath('DieVix.ini');
+
+  if FDefaultIniFileName <> '' then
+    TargetIniName := FDefaultIniFileName
+  else
+    TargetIniName := 'DieVix.ini';
+
+  if TPath.IsPathRooted(TargetIniName) then
+    FIniPath := TargetIniName
+  else
+  begin
+    FIniPath := TPath.Combine(ExtractFilePath(ParamStr(0)), TargetIniName);
+    if not FileExists(FIniPath) and FileExists(TPath.Combine(ExtractFilePath(ParamStr(0)), '..\' + TargetIniName)) then
+      FIniPath := TPath.GetFullPath(TPath.Combine(ExtractFilePath(ParamStr(0)), '..\' + TargetIniName))
+    else if not FileExists(FIniPath) and FileExists(TPath.Combine(ExtractFilePath(ParamStr(0)), '..\..\' + TargetIniName)) then
+      FIniPath := TPath.GetFullPath(TPath.Combine(ExtractFilePath(ParamStr(0)), '..\..\' + TargetIniName))
+    else if not FileExists(FIniPath) and FileExists(TargetIniName) then
+      FIniPath := TPath.GetFullPath(TargetIniName);
+  end;
 
   SetupWaitCursor;
 
@@ -141,7 +176,11 @@ begin
   if FileExists(FIniPath) then
     LoadFromIni(FIniPath)
   else
-    ConfigureConnection(FConnection, FConfig);
+  begin
+    LoadFromIni(FIniPath);
+    if not FileExists(FIniPath) then
+      ConfigureConnection(FConnection, FConfig);
+  end;
 end;
 
 destructor TDieVixConnectionManager.Destroy;
@@ -234,11 +273,37 @@ var
   Ini: TIniFile;
   TargetFile: string;
   ModeStr: string;
+  ExampleFileName: string;
+  ExamplePath: string;
 begin
   if APath <> '' then
     FIniPath := APath;
 
   TargetFile := FIniPath;
+  if not FileExists(TargetFile) then
+  begin
+    // First run initialization: copy template if available or generate default config
+    ExampleFileName := ExtractFileName(TargetFile) + '.example';
+    ExamplePath := TPath.Combine(ExtractFilePath(TargetFile), ExampleFileName);
+    if not FileExists(ExamplePath) then
+      ExamplePath := TPath.Combine(ExtractFilePath(ParamStr(0)), ExampleFileName);
+    if not FileExists(ExamplePath) and FileExists(TPath.Combine(ExtractFilePath(ParamStr(0)), '..\' + ExampleFileName)) then
+      ExamplePath := TPath.GetFullPath(TPath.Combine(ExtractFilePath(ParamStr(0)), '..\' + ExampleFileName));
+    if not FileExists(ExamplePath) and FileExists(ExampleFileName) then
+      ExamplePath := TPath.GetFullPath(ExampleFileName);
+
+    if FileExists(ExamplePath) then
+    begin
+      try
+        TFile.Copy(ExamplePath, TargetFile, False);
+      except
+        SaveToIni(TargetFile);
+      end;
+    end
+    else
+      SaveToIni(TargetFile);
+  end;
+
   if not FileExists(TargetFile) then
     Exit;
 
@@ -261,8 +326,8 @@ begin
         FConfig.Database := TPath.GetFullPath(TPath.Combine(ExtractFilePath(ParamStr(0)), FConfig.Database));
     end;
     FConfig.UserName := Ini.ReadString('Database', 'UserName', 'SYSDBA');
-    FConfig.Password := Ini.ReadString('Database', 'Password', 'masterkey');
-    FConfig.VendorLib := Ini.ReadString('Database', 'VendorLib', 'C:\Program Files (x86)\Firebird\Firebird_5_0\fbclient.dll');
+    FConfig.Password := Ini.ReadString('Database', 'Password', '');
+    FConfig.VendorLib := Ini.ReadString('Database', 'VendorLib', 'C:\Program Files\Firebird\Firebird_5_0\fbclient.dll');
     FConfig.CharSet := Ini.ReadString('Database', 'CharacterSet', 'UTF8');
     FConfig.ConnectionTimeoutSec := Ini.ReadInteger('Database', 'Timeout', 15);
 
@@ -340,6 +405,48 @@ begin
   end;
 end;
 
+type
+  TMigrationItem = record
+    Version: Integer;
+    FileName: string;
+    FullPath: string;
+  end;
+
+function TryParseMigrationFileName(const AFileName: string; out AVersion: Integer): Boolean;
+var
+  SepPos: Integer;
+  VerStr: string;
+  I: Integer;
+begin
+  AVersion := 0;
+  Result := False;
+
+  if not SameText(ExtractFileExt(AFileName), '.sql') then
+    Exit;
+
+  // Expected format: V<digits>__<description>.sql (e.g., V001__initial_schema.sql)
+  if (Length(AFileName) < 7) or (UpCase(AFileName[1]) <> 'V') then
+    Exit;
+
+  SepPos := Pos('__', AFileName);
+  if SepPos < 3 then // Must have at least 1 digit between 'V' and '__'
+    Exit;
+
+  VerStr := Copy(AFileName, 2, SepPos - 2);
+  for I := 1 to Length(VerStr) do
+    if not CharInSet(VerStr[I], ['0'..'9']) then
+      Exit;
+
+  if not TryStrToInt(VerStr, AVersion) or (AVersion <= 0) then
+    Exit;
+
+  // Must have a non-empty description between '__' and '.sql'
+  if (Length(AFileName) - 4) < (SepPos + 2) then
+    Exit;
+
+  Result := True;
+end;
+
 function TDieVixConnectionManager.ApplyMigrations(
   const AMigrationsDir: string;
   out AAppliedCount: Integer;
@@ -349,12 +456,32 @@ var
   Conn: TFDConnection;
   Qry: TFDQuery;
   Script: TFDScript;
+  Trans: TFDTransaction;
   Files: TArray<string>;
   F: string;
   FileName: string;
   VerNum: Integer;
   Applied: Boolean;
-  VerStr: string;
+  MigrationList: TList<TMigrationItem>;
+  Item: TMigrationItem;
+  I: Integer;
+  TableExistedBefore: Boolean;
+
+  function HasSchemaVersionTable: Boolean;
+  begin
+    if not Conn.InTransaction then
+      Conn.StartTransaction;
+    try
+      Qry.SQL.Text := 'SELECT 1 FROM RDB$RELATIONS WHERE RDB$RELATION_NAME = ''SCHEMA_VERSION'' AND RDB$VIEW_BLR IS NULL';
+      Qry.Open;
+      Result := not Qry.IsEmpty;
+      Qry.Close;
+    finally
+      if Conn.InTransaction then
+        Conn.Commit;
+    end;
+  end;
+
 begin
   AAppliedCount := 0;
   ALog := '';
@@ -366,74 +493,211 @@ begin
     Exit;
   end;
 
-  Conn := GetConnection;
-  Qry := TFDQuery.Create(nil);
-  Script := TFDScript.Create(nil);
+  MigrationList := TList<TMigrationItem>.Create;
   try
-    Qry.Connection := Conn;
-    Script.Connection := Conn;
-
-    // 1. Ensure SCHEMA_VERSION table exists
-    try
-      Qry.SQL.Text := 'SELECT COUNT(*) FROM SCHEMA_VERSION';
-      Qry.Open;
-    except
-      // Create SCHEMA_VERSION if not exists
-      Qry.Close;
-      Qry.SQL.Text :=
-        'CREATE TABLE SCHEMA_VERSION (' +
-        '  VERSION_NUM INTEGER NOT NULL PRIMARY KEY,' +
-        '  SCRIPT_NAME VARCHAR(100) NOT NULL,' +
-        '  APPLIED_AT TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL' +
-        ')';
-      Qry.ExecSQL;
-    end;
-    Qry.Close;
-
-    // 2. Discover migration files
-    Files := TDirectory.GetFiles(AMigrationsDir, 'V*.sql');
-    TArray.Sort<string>(Files);
-
+    // 1. Discover and robustly validate all migration files
+    Files := TDirectory.GetFiles(AMigrationsDir, '*.sql');
     for F in Files do
     begin
       FileName := ExtractFileName(F);
-      // Expected naming: V001__description.sql
-      VerStr := Copy(FileName, 2, Pos('__', FileName) - 2);
-      VerNum := StrToIntDef(VerStr, 0);
-
-      if VerNum = 0 then
-        Continue;
-
-      // Check if already applied
-      Qry.SQL.Text := 'SELECT COUNT(*) FROM SCHEMA_VERSION WHERE VERSION_NUM = :V';
-      Qry.ParamByName('V').AsInteger := VerNum;
-      Qry.Open;
-      Applied := Qry.Fields[0].AsInteger > 0;
-      Qry.Close;
-
-      if not Applied then
+      if not TryParseMigrationFileName(FileName, VerNum) then
       begin
-        ALog := ALog + Format('Applying %s...', [FileName]) + sLineBreak;
-        Script.SQLScripts.Clear;
-        Script.SQLScripts.Add.SQL.LoadFromFile(F);
-        Script.ExecuteAll;
+        ALog := ALog + Format('Malformed migration file name: "%s". Expected format: V<number>__<description>.sql', [FileName]) + sLineBreak;
+        Exit(False);
+      end;
 
-        // Record version
-        Qry.SQL.Text := 'INSERT INTO SCHEMA_VERSION (VERSION_NUM, SCRIPT_NAME) VALUES (:V, :N)';
-        Qry.ParamByName('V').AsInteger := VerNum;
-        Qry.ParamByName('N').AsString := FileName;
-        Qry.ExecSQL;
+      Item.Version := VerNum;
+      Item.FileName := FileName;
+      Item.FullPath := F;
+      MigrationList.Add(Item);
+    end;
 
-        Inc(AAppliedCount);
-        ALog := ALog + Format('Applied %s successfully.', [FileName]) + sLineBreak;
+    // 2. Sort migrations numerically by version number
+    MigrationList.Sort(TComparer<TMigrationItem>.Construct(
+      function(const Left, Right: TMigrationItem): Integer
+      begin
+        Result := Left.Version - Right.Version;
+      end
+    ));
+
+    // 3. Enforce version uniqueness
+    for I := 1 to MigrationList.Count - 1 do
+    begin
+      if MigrationList[I].Version = MigrationList[I - 1].Version then
+      begin
+        ALog := ALog + Format('Duplicate migration version %d detected in files: "%s" and "%s"',
+          [MigrationList[I].Version, MigrationList[I - 1].FileName, MigrationList[I].FileName]) + sLineBreak;
+        Exit(False);
       end;
     end;
 
-    Result := True;
+    // 4. Connect and prepare execution context
+    Conn := GetConnection;
+    Qry := TFDQuery.Create(nil);
+    Script := TFDScript.Create(nil);
+    try
+      Qry.Connection := Conn;
+      Script.Connection := Conn;
+      Script.ScriptOptions.BreakOnError := True;
+      Script.ScriptOptions.CommitEachNCommands := 0;
+
+      // 5. Apply each unapplied migration atomically inside a transaction
+      for Item in MigrationList do
+      begin
+        TableExistedBefore := HasSchemaVersionTable;
+        Applied := False;
+        if TableExistedBefore then
+        begin
+          if not Conn.InTransaction then
+            Conn.StartTransaction;
+          try
+            Qry.SQL.Text := 'SELECT COUNT(*) FROM SCHEMA_VERSION WHERE VERSION_NUM = :V';
+            Qry.ParamByName('V').AsInteger := Item.Version;
+            Qry.Open;
+            Applied := Qry.Fields[0].AsInteger > 0;
+            Qry.Close;
+          finally
+            if Conn.InTransaction then
+              Conn.Commit;
+          end;
+        end;
+
+        if not Applied then
+        begin
+          ALog := ALog + Format('Applying %s...', [Item.FileName]) + sLineBreak;
+          if not Conn.InTransaction then
+            Conn.StartTransaction;
+          try
+            Script.SQLScripts.Clear;
+            var ScriptLines := TStringList.Create;
+            try
+              ScriptLines.LoadFromFile(Item.FullPath);
+              for var LIdx := ScriptLines.Count - 1 downto 0 do
+              begin
+                if ScriptLines[LIdx].ToUpper.Contains('INSERT INTO SCHEMA_VERSION') then
+                  ScriptLines.Delete(LIdx);
+              end;
+              Script.SQLScripts.Add.SQL.Assign(ScriptLines);
+            finally
+              ScriptLines.Free;
+            end;
+            if (not Script.ExecuteAll) or (Script.TotalErrors > 0) then
+              raise Exception.Create(Format('Script execution failed with %d error(s)', [Script.TotalErrors]));
+
+            // In Firebird, metadata changes (DDL that creates a new table like SCHEMA_VERSION in V001)
+            // must be committed before DML can access the newly created table in the metadata cache.
+            if not TableExistedBefore then
+            begin
+              if Conn.InTransaction then
+                Conn.Commit;
+              Conn.StartTransaction;
+            end;
+
+            // Record version atomically in the transaction (if not already recorded by script itself)
+            if not Conn.InTransaction then
+              Conn.StartTransaction;
+            Qry.SQL.Text := 'SELECT COUNT(*) FROM SCHEMA_VERSION WHERE VERSION_NUM = :V';
+            Qry.ParamByName('V').AsInteger := Item.Version;
+            Qry.Open;
+            if Qry.Fields[0].AsInteger = 0 then
+            begin
+              Qry.Close;
+              Qry.SQL.Text := 'INSERT INTO SCHEMA_VERSION (VERSION_NUM, SCRIPT_NAME) VALUES (:V, :N)';
+              Qry.ParamByName('V').AsInteger := Item.Version;
+              Qry.ParamByName('N').AsString := Item.FileName;
+              Qry.ExecSQL;
+            end
+            else
+              Qry.Close;
+
+            Conn.Commit;
+            Inc(AAppliedCount);
+            ALog := ALog + Format('Applied %s successfully.', [Item.FileName]) + sLineBreak;
+          except
+            on E: Exception do
+            begin
+              if Conn.InTransaction then
+                Conn.Rollback;
+              ALog := ALog + Format('Error applying migration %s: %s', [Item.FileName, E.Message]) + sLineBreak;
+              Exit(False);
+            end;
+          end;
+        end;
+      end;
+
+      Result := True;
+    finally
+      Script.Free;
+      Qry.Free;
+    end;
   finally
-    Script.Free;
-    Qry.Free;
+    MigrationList.Free;
   end;
+end;
+
+function IsSafeTestDatabasePath(const ATestDbPath, AAppIniPath: string; out AReason: string): Boolean;
+var
+  TargetFileName: string;
+  NormalizedTarget: string;
+  AppDbVal: string;
+  NormalizedAppDb: string;
+  Ini: TIniFile;
+begin
+  AReason := '';
+  if Trim(ATestDbPath) = '' then
+  begin
+    AReason := 'Target test database path is empty.';
+    Exit(False);
+  end;
+
+  TargetFileName := LowerCase(ExtractFileName(ATestDbPath));
+  // 1. Filename must contain 'disposable' or 'test' (case-insensitive)
+  if (Pos('disposable', TargetFileName) = 0) and (Pos('test', TargetFileName) = 0) then
+  begin
+    AReason := Format('Database filename "%s" does not contain "disposable" or "test". Refusing execution to protect non-test databases.', [ExtractFileName(ATestDbPath)]);
+    Exit(False);
+  end;
+
+  // 2. Refuse if target is the same database configured in DieVix.ini (when it exists)
+  if (Trim(AAppIniPath) <> '') and FileExists(AAppIniPath) then
+  begin
+    try
+      Ini := TIniFile.Create(AAppIniPath);
+      try
+        AppDbVal := Trim(Ini.ReadString('Database', 'Database', ''));
+      finally
+        Ini.Free;
+      end;
+
+      if AppDbVal <> '' then
+      begin
+        NormalizedTarget := LowerCase(TPath.GetFullPath(ATestDbPath));
+        NormalizedAppDb := LowerCase(TPath.GetFullPath(AppDbVal));
+
+        if (NormalizedTarget = NormalizedAppDb) or SameText(TargetFileName, LowerCase(ExtractFileName(AppDbVal))) then
+        begin
+          AReason := Format('Target test database "%s" matches application database "%s" configured in %s.',
+            [ExtractFileName(ATestDbPath), ExtractFileName(AppDbVal), ExtractFileName(AAppIniPath)]);
+          Exit(False);
+        end;
+      end;
+    except
+      on E: Exception do
+      begin
+        AReason := 'Failed to read application configuration ' + AAppIniPath + ': ' + E.Message;
+        Exit(False);
+      end;
+    end;
+  end;
+
+  Result := True;
+end;
+
+function IsSafeTestDatabasePath(const ATestDbPath, AAppIniPath: string): Boolean;
+var
+  DummyReason: string;
+begin
+  Result := IsSafeTestDatabasePath(ATestDbPath, AAppIniPath, DummyReason);
 end;
 
 initialization

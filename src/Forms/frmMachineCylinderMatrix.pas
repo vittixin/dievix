@@ -1,7 +1,7 @@
 unit frmMachineCylinderMatrix;
 
 {==============================================================================
-  DieVix – Rotary Die & Keyline Manager
+  DieVix - Rotary Die & Keyline Manager
   Machine x Cylinder Compatibility Matrix Form
   2D cross-tab grid for managing fleet assignments transactionally.
 ==============================================================================}

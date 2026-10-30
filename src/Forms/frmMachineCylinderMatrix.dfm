@@ -1,7 +1,7 @@
 object frmMachineCylinderMatrix: TfrmMachineCylinderMatrix
   Left = 0
   Top = 0
-  Caption = 'Machine '#215' Cylinder Assignment Matrix — DieVix'
+  Caption = 'Machine '#215' Cylinder Assignment Matrix - DieVix'
   ClientHeight = 560
   ClientWidth = 920
   Color = clBtnFace

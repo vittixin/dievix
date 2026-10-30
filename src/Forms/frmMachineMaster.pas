@@ -1,7 +1,7 @@
 unit frmMachineMaster;
 
 {==============================================================================
-  DieVix – Rotary Die & Keyline Manager
+  DieVix - Rotary Die & Keyline Manager
   Machine / Press Master Form
 ==============================================================================}
 

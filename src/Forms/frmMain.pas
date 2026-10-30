@@ -1,7 +1,7 @@
 unit frmMain;
 
 {==============================================================================
-  DieVix – Rotary Die & Keyline Manager
+  DieVix - Rotary Die & Keyline Manager
   Main Application Desktop Shell
 ==============================================================================}
 
@@ -15,7 +15,8 @@ uses
   DieVix.Domain, DieVix.ConnectionManager, DieVix.MasterDataService,
   frmCylinderMaster, frmMachineMaster, frmMachineCylinderMatrix,
   frmCustomerMaster, frmMediaMaster, frmDieStatusMaster, frmSettings,
-  DieVix.DieService, frmDieRegister, frmKeylineCalculator;
+  DieVix.DieService, frmDieRegister, frmKeylineCalculator, frmBackup,
+  DieVix.FlatbedDieService, frmFlatbedDieRegister;
 
 type
   TfrmMain = class(TForm)
@@ -24,6 +25,7 @@ type
     lblTagline: TLabel;
     pnlSidebar: TPanel;
     btnDieRegister: TButton;
+    btnFlatbedRegister: TButton;
     btnKeylineCalc: TButton;
     btnCylinders: TButton;
     btnMachines: TButton;
@@ -32,6 +34,7 @@ type
     btnMedia: TButton;
     btnStatuses: TButton;
     btnSettings: TButton;
+    btnBackup: TButton;
     pnlContent: TPanel;
     pnlDashboardCards: TPanel;
     cardDies: TPanel;
@@ -57,10 +60,13 @@ type
     btnQuickCustomer: TButton;
     btnQuickSettings: TButton;
     btnQuickKeylineCalc: TButton;
+    btnQuickBackup: TButton;
+    btnQuickFlatbed: TButton;
     statBar: TStatusBar;
     procedure FormCreate(Sender: TObject);
     procedure FormDestroy(Sender: TObject);
     procedure btnDieRegisterClick(Sender: TObject);
+    procedure btnFlatbedRegisterClick(Sender: TObject);
     procedure btnKeylineCalcClick(Sender: TObject);
     procedure btnCylindersClick(Sender: TObject);
     procedure btnMachinesClick(Sender: TObject);
@@ -69,9 +75,11 @@ type
     procedure btnMediaClick(Sender: TObject);
     procedure btnStatusesClick(Sender: TObject);
     procedure btnSettingsClick(Sender: TObject);
+    procedure btnBackupClick(Sender: TObject);
   private
     FService: TMasterDataService;
     FDieService: TDieService;
+    FFlatbedService: TFlatbedDieService;
     procedure RefreshDashboard;
     procedure UpdateStatusBar;
   public
@@ -105,12 +113,14 @@ begin
 
   FService := TMasterDataService.Create;
   FDieService := TDieService.Create;
+  FFlatbedService := TFlatbedDieService.Create;
   UpdateStatusBar;
   RefreshDashboard;
 end;
 
 procedure TfrmMain.FormDestroy(Sender: TObject);
 begin
+  FFlatbedService.Free;
   FDieService.Free;
   FService.Free;
 end;
@@ -190,6 +200,20 @@ begin
   Form := TfrmDieRegister.Create(Self);
   try
     Form.DieService := FDieService;
+    Form.ShowModal;
+  finally
+    Form.Free;
+  end;
+  RefreshDashboard;
+end;
+
+procedure TfrmMain.btnFlatbedRegisterClick(Sender: TObject);
+var
+  Form: TfrmFlatbedDieRegister;
+begin
+  Form := TfrmFlatbedDieRegister.Create(Self);
+  try
+    Form.FlatbedService := FFlatbedService;
     Form.ShowModal;
   finally
     Form.Free;
@@ -304,6 +328,19 @@ begin
     Form.Free;
   end;
   UpdateStatusBar;
+end;
+
+procedure TfrmMain.btnBackupClick(Sender: TObject);
+var
+  Form: TfrmBackup;
+begin
+  Form := TfrmBackup.Create(Self);
+  try
+    Form.ShowModal;
+  finally
+    Form.Free;
+  end;
+  RefreshDashboard;
 end;
 
 end.

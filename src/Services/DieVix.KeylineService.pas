@@ -1,7 +1,7 @@
 unit DieVix.KeylineService;
 
 {==============================================================================
-  DieVix – Rotary Die & Keyline Manager
+  DieVix - Rotary Die & Keyline Manager
   Keyline Calculator & Cylinder Optimization Application Service
   Orchestrates integer-micrometre rotary calculations, machine web-fit
   verification, cylinder fleet recommendations, and existing die reuse discovery.
@@ -293,7 +293,7 @@ begin
           LabelAroundUm := MmToUm(AInput.LabelAroundMm);
           LabelAcrossUm := MmToUm(AInput.LabelAcrossMm);
           MinGapUm := MmToUm(AInput.MinAroundGapMm);
-          if MinGapUm <= 0 then MinGapUm := 3000;
+          if MinGapUm <= 0 then MinGapUm := DEFAULT_MIN_GAP_UM;
           HardBlockGapUm := MmToUm(AInput.HardBlockGapMm);
           AcrossGapUm := MmToUm(AInput.AcrossGapMm);
           LeftMarginUm := MmToUm(AInput.LeftMarginMm);

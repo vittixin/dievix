@@ -1,0 +1,11 @@
+[Database]
+Mode=Server
+Server=localhost
+Port=3050
+Database=data/DIEVIX.FDB
+UserName=SYSDBA
+; WARNING: Do not store plaintext production passwords in version control.
+Password=your_password_here
+VendorLib=C:\Program Files\Firebird\Firebird_5_0\fbclient.dll
+CharacterSet=UTF8
+Timeout=15

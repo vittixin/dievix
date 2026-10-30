@@ -1,7 +1,7 @@
 unit frmDieRegister;
 
 {==============================================================================
-  DieVix – Rotary Die & Keyline Manager
+  DieVix - Rotary Die & Keyline Manager
   Die Master Register Form
   Comprehensive searchable & filterable rotary tooling register with
   gap validation indicators and physical inventory tracking.
@@ -13,7 +13,7 @@ uses
   Winapi.Windows, Winapi.Messages, System.SysUtils, System.Variants, System.Classes,
   Vcl.Graphics, Vcl.Controls, Vcl.Forms, Vcl.Dialogs, Vcl.StdCtrls, Vcl.Grids,
   Vcl.ExtCtrls, System.Generics.Collections, System.UITypes,
-  DieVix.Domain, DieVix.DieService, frmDieEditor;
+  DieVix.Domain, DieVix.CalculationEngine, DieVix.DieService, DieVix.ReportService, frmDieEditor;
 
 type
   TfrmDieRegister = class(TForm)
@@ -62,6 +62,10 @@ type
     btnPermanentDelete: TButton;
     btnRefresh: TButton;
     btnClose: TButton;
+    btnPrintCard: TButton;
+    btnPrintCatalog: TButton;
+    btnExportXlsx: TButton;
+    btnFleetMatrix: TButton;
     gridDies: TStringGrid;
     pnlStatus: TPanel;
     lblCount: TLabel;
@@ -82,6 +86,10 @@ type
     procedure btnPermanentDeleteClick(Sender: TObject);
     procedure btnRefreshClick(Sender: TObject);
     procedure btnCloseClick(Sender: TObject);
+    procedure btnPrintCardClick(Sender: TObject);
+    procedure btnPrintCatalogClick(Sender: TObject);
+    procedure btnExportXlsxClick(Sender: TObject);
+    procedure btnFleetMatrixClick(Sender: TObject);
     procedure gridDiesDblClick(Sender: TObject);
   private
     FDieService: TDieService;
@@ -91,6 +99,7 @@ type
     FMediaIDs: TList<Integer>;
     FMachineIDs: TList<Integer>;
     FIsSmartSearch: Boolean;
+    function GetCurrentFilter: TDieSearchFilter;
     procedure InitGrid;
     procedure InitGridForSmartSearch;
     procedure LoadFilterLookups;
@@ -310,6 +319,27 @@ begin
   cmbCutTypeFilter.ItemIndex := 0;
 end;
 
+function TfrmDieRegister.GetCurrentFilter: TDieSearchFilter;
+begin
+  Result := TDieSearchFilter.Default;
+  Result.SearchText := Trim(edtSearch.Text);
+
+  if cmbCustomerFilter.ItemIndex > 0 then
+    Result.CustomerID := FCustomerIDs[cmbCustomerFilter.ItemIndex];
+
+  if (cmbTeethFilter.ItemIndex > 0) and (cmbTeethFilter.Text <> 'All Teeth') then
+    Result.Teeth := StrToIntDef(cmbTeethFilter.Text, 0);
+
+  if cmbMediaFilter.ItemIndex > 0 then
+    Result.MediaID := FMediaIDs[cmbMediaFilter.ItemIndex];
+
+  if (cmbStatusFilter.ItemIndex > 0) and (cmbStatusFilter.Text <> 'All Statuses') then
+    Result.StatusCode := cmbStatusFilter.Text;
+
+  Result.OnlySub3mm := chkOnlySub3mm.Checked;
+  Result.IncludeArchived := chkIncludeArchived.Checked;
+end;
+
 procedure TfrmDieRegister.LoadData;
 var
   Filter: TDieSearchFilter;
@@ -317,24 +347,7 @@ var
   Die: TDie;
   GapStr, LocStr: string;
 begin
-  Filter := TDieSearchFilter.Default;
-  Filter.SearchText := Trim(edtSearch.Text);
-
-  if cmbCustomerFilter.ItemIndex > 0 then
-    Filter.CustomerID := FCustomerIDs[cmbCustomerFilter.ItemIndex];
-
-  if (cmbTeethFilter.ItemIndex > 0) and (cmbTeethFilter.Text <> 'All Teeth') then
-    Filter.Teeth := StrToIntDef(cmbTeethFilter.Text, 0);
-
-  if cmbMediaFilter.ItemIndex > 0 then
-    Filter.MediaID := FMediaIDs[cmbMediaFilter.ItemIndex];
-
-  if (cmbStatusFilter.ItemIndex > 0) and (cmbStatusFilter.Text <> 'All Statuses') then
-    Filter.StatusCode := cmbStatusFilter.Text;
-
-  Filter.OnlySub3mm := chkOnlySub3mm.Checked;
-  Filter.IncludeArchived := chkIncludeArchived.Checked;
-
+  Filter := GetCurrentFilter;
   FDieList.Free;
   FDieList := FDieService.SearchDies(Filter);
 
@@ -355,8 +368,8 @@ begin
       gridDies.Cells[5, I + 1] := FormatFloat('0.000', Die.AcrossSizeMm);
       gridDies.Cells[6, I + 1] := Format('%d x %d', [Die.AroundUps, Die.AcrossUps]);
 
-      // Format gap with sub-3mm indicator
-      if Die.AroundGapMm < 3.000 then
+      // Format gap with sub-minimum indicator
+      if Die.AroundGapMm < UmToMm(FDieService.GetMinAroundGapUm) then
         GapStr := FormatFloat('0.000', Die.AroundGapMm) + ' *'
       else
         GapStr := FormatFloat('0.000', Die.AroundGapMm);
@@ -376,7 +389,7 @@ begin
   end;
 
   lblCount.Caption := Format('Showing %d tooling records', [FDieList.Count]);
-  lblSub3mmNotice.Caption := '* Dies with around gap < 3.000 mm require production management override.';
+  lblSub3mmNotice.Caption := Format('* Dies with around gap < %0.3f mm require production management override.', [UmToMm(FDieService.GetMinAroundGapUm)]);
 end;
 
 procedure TfrmDieRegister.PerformSmartSearch;
@@ -530,7 +543,7 @@ begin
   FSmartList.Clear;
   InitGrid;
   LoadData;
-  lblSub3mmNotice.Caption := '* Dies with around gap < 3.000 mm require production management override.';
+  lblSub3mmNotice.Caption := Format('* Dies with around gap < %0.3f mm require production management override.', [UmToMm(FDieService.GetMinAroundGapUm)]);
 end;
 
 function TfrmDieRegister.GetSelectedDieID: Integer;
@@ -702,7 +715,7 @@ begin
   Reason := InputBox('Status Change Reason', 'Enter reason for status change:', '');
 
   try
-    FDieService.ChangeDieStatus(SelectedID, UpperCase(Trim(NewStatus)), Reason, 'OPERATOR');
+    FDieService.ChangeDieStatus(SelectedID, UpperCase(Trim(NewStatus)), Reason);
     if FIsSmartSearch then
       PerformSmartSearch
     else
@@ -733,7 +746,7 @@ begin
   Notes := InputBox('Relocation Notes', 'Enter relocation notes / movement reason:', '');
 
   try
-    FDieService.UpdateDieLocation(SelectedID, Rack, Shelf, Bin, Notes, 'OPERATOR');
+    FDieService.UpdateDieLocation(SelectedID, Rack, Shelf, Bin, Notes);
     if FIsSmartSearch then
       PerformSmartSearch
     else
@@ -780,7 +793,7 @@ begin
   end;
 
   try
-    FDieService.ArchiveDie(SelectedID, Trim(Reason), 'OPERATOR');
+    FDieService.ArchiveDie(SelectedID, Trim(Reason));
     ShowMessage(Format('Die tooling "%s" has been successfully archived.', [SelectedDie.SerialNo]));
     if FIsSmartSearch then
       PerformSmartSearch
@@ -827,7 +840,7 @@ begin
     Reason := 'Reactivated for production';
 
   try
-    FDieService.RestoreDie(SelectedID, Trim(Reason), 'OPERATOR');
+    FDieService.RestoreDie(SelectedID, Trim(Reason));
     ShowMessage(Format('Die tooling "%s" has been successfully restored to ACTIVE status.', [SelectedDie.SerialNo]));
     if FIsSmartSearch then
       PerformSmartSearch
@@ -906,6 +919,78 @@ end;
 procedure TfrmDieRegister.btnCloseClick(Sender: TObject);
 begin
   Close;
+end;
+
+procedure TfrmDieRegister.btnPrintCardClick(Sender: TObject);
+var
+  SelectedID: Integer;
+  RepSvc: TDieVixReportService;
+begin
+  SelectedID := GetSelectedDieID;
+  if SelectedID <= 0 then
+  begin
+    MessageDlg('Please select a rotary die from the list to print its Job Bag Card.', mtInformation, [mbOK], 0);
+    Exit;
+  end;
+
+  RepSvc := TDieVixReportService.Create;
+  try
+    RepSvc.PreviewToolingCard(SelectedID);
+  finally
+    RepSvc.Free;
+  end;
+end;
+
+procedure TfrmDieRegister.btnPrintCatalogClick(Sender: TObject);
+var
+  RepSvc: TDieVixReportService;
+begin
+  RepSvc := TDieVixReportService.Create;
+  try
+    RepSvc.PreviewRegisterCatalog(GetCurrentFilter);
+  finally
+    RepSvc.Free;
+  end;
+end;
+
+procedure TfrmDieRegister.btnExportXlsxClick(Sender: TObject);
+var
+  SaveDlg: TSaveDialog;
+  RepSvc: TDieVixReportService;
+begin
+  SaveDlg := TSaveDialog.Create(nil);
+  try
+    SaveDlg.Title := 'Export Die Register Catalog to Excel';
+    SaveDlg.Filter := 'Excel Workbook (*.xlsx)|*.xlsx|All Files (*.*)|*.*';
+    SaveDlg.DefaultExt := 'xlsx';
+    SaveDlg.FileName := 'DieVix_Register_Catalog_' + FormatDateTime('yyyymmdd', Now) + '.xlsx';
+    if SaveDlg.Execute then
+    begin
+      RepSvc := TDieVixReportService.Create;
+      try
+        if RepSvc.ExportRegisterCatalogXlsx(GetCurrentFilter, SaveDlg.FileName) then
+          MessageDlg('Die register catalog successfully exported to:' + #13#10 + SaveDlg.FileName, mtInformation, [mbOK], 0)
+        else
+          MessageDlg('Failed to export catalog to Excel.', mtError, [mbOK], 0);
+      finally
+        RepSvc.Free;
+      end;
+    end;
+  finally
+    SaveDlg.Free;
+  end;
+end;
+
+procedure TfrmDieRegister.btnFleetMatrixClick(Sender: TObject);
+var
+  RepSvc: TDieVixReportService;
+begin
+  RepSvc := TDieVixReportService.Create;
+  try
+    RepSvc.PreviewFleetMatrix;
+  finally
+    RepSvc.Free;
+  end;
 end;
 
 end.

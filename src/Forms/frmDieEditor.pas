@@ -1,7 +1,7 @@
 unit frmDieEditor;
 
 {==============================================================================
-  DieVix – Rotary Die & Keyline Manager
+  DieVix - Rotary Die & Keyline Manager
   Die Tooling Add/Edit Form
   Provides live integer micrometre calculations, gap warning badges,
   similar die reuse scanner, and audit trail inspection.
@@ -13,7 +13,7 @@ uses
   Winapi.Windows, Winapi.Messages, System.SysUtils, System.Variants, System.Classes,
   Vcl.Graphics, Vcl.Controls, Vcl.Forms, Vcl.Dialogs, Vcl.StdCtrls, Vcl.ExtCtrls,
   Vcl.ComCtrls, Vcl.Grids, System.Generics.Collections, System.UITypes,
-  DieVix.Domain, DieVix.DieService, DieVix.CalculationEngine;
+  DieVix.Domain, DieVix.DieService, DieVix.CalculationEngine, DieVix.ReportService;
 
 type
   TfrmDieEditor = class(TForm)
@@ -24,6 +24,7 @@ type
     btnSave: TButton;
     btnCancel: TButton;
     btnCheckSimilar: TButton;
+    btnPrintJobCard: TButton;
     pageDie: TPageControl;
     tabGeometry: TTabSheet;
     tabInventory: TTabSheet;
@@ -117,6 +118,7 @@ type
     procedure btnSaveClick(Sender: TObject);
     procedure btnCancelClick(Sender: TObject);
     procedure btnCheckSimilarClick(Sender: TObject);
+    procedure btnPrintJobCardClick(Sender: TObject);
   private
     FDieService: TDieService;
     FDieID: Integer;
@@ -313,7 +315,7 @@ begin
     else if cmbTeeth.Items.Count > 0 then
       cmbTeeth.ItemIndex := 0;
 
-    edtPitch.Text := '3175';
+    edtPitch.Text := IntToStr(STANDARD_PITCH_UM);
     edtAroundSize.Text := '50.000';
     edtAcrossSize.Text := '50.000';
     edtAroundUps.Text := '1';
@@ -620,7 +622,7 @@ begin
   Teeth := StrToIntDef(cmbTeeth.Text, 0);
   AroundUps := StrToIntDef(edtAroundUps.Text, 1);
   AroundSizeMm := StrToFloatDef(edtAroundSize.Text, 0.0);
-  PitchUm := StrToIntDef(edtPitch.Text, 3175);
+  PitchUm := StrToIntDef(edtPitch.Text, STANDARD_PITCH_UM);
 
   if (Teeth <= 0) or (AroundUps <= 0) or (AroundSizeMm <= 0.0) then
   begin
@@ -643,10 +645,11 @@ begin
   valCutLengthMm.Caption := FormatFloat('0.000 mm', TotalCutMm);
   valWastePercent.Caption := FormatFloat('0.00 %', GapRes.WastePercent);
 
+  valGapStatus.Caption := GapRes.StatusMessage;
+
   case GapRes.Status of
     gsOptimal, gsStandardApproved:
     begin
-      valGapStatus.Caption := 'APPROVED (>= 3.0 mm)';
       valGapStatus.Color := $002E7D32; // Rich Green
       valGapStatus.Font.Color := clWhite;
       edtOverrideReason.Color := clWindow;
@@ -656,7 +659,6 @@ begin
 
     gsSubStandardWarning:
     begin
-      valGapStatus.Caption := 'WARNING: SUB-3MM';
       valGapStatus.Color := $0000A5FF; // Orange
       valGapStatus.Font.Color := clWhite;
       edtOverrideReason.Color := $00E1FFFF; // Pale yellow/orange tint
@@ -666,7 +668,6 @@ begin
 
     gsMechanicallyRejected:
     begin
-      valGapStatus.Caption := 'REJECTED: IMPOSSIBLE';
       valGapStatus.Color := $002222B2; // Rich Red
       valGapStatus.Font.Color := clWhite;
       edtOverrideReason.Color := $00E8E8FF;
@@ -734,6 +735,24 @@ begin
   end;
 end;
 
+procedure TfrmDieEditor.btnPrintJobCardClick(Sender: TObject);
+var
+  RepSvc: TDieVixReportService;
+begin
+  if FDieID <= 0 then
+  begin
+    MessageDlg('Please save the die tooling before generating the Job Bag Card.', mtInformation, [mbOK], 0);
+    Exit;
+  end;
+
+  RepSvc := TDieVixReportService.Create;
+  try
+    RepSvc.PreviewToolingCard(FDieID);
+  finally
+    RepSvc.Free;
+  end;
+end;
+
 procedure TfrmDieEditor.btnSaveClick(Sender: TObject);
 var
   Die: TDie;
@@ -763,7 +782,7 @@ begin
 
   Die.StatusCode := Trim(cmbStatus.Text);
   Die.Teeth := StrToIntDef(cmbTeeth.Text, 0);
-  Die.PitchUm := StrToIntDef(edtPitch.Text, 3175);
+  Die.PitchUm := StrToIntDef(edtPitch.Text, STANDARD_PITCH_UM);
   Die.AroundSizeMm := StrToFloatDef(edtAroundSize.Text, 0.0);
   Die.AcrossSizeMm := StrToFloatDef(edtAcrossSize.Text, 0.0);
   Die.AroundUps := StrToIntDef(edtAroundUps.Text, 1);
@@ -792,7 +811,7 @@ begin
   Die.Notes := Trim(edtNotes.Text);
 
   try
-    SavedID := FDieService.SaveDie(Die, 'OPERATOR');
+    SavedID := FDieService.SaveDie(Die);
     FDieID := SavedID;
     FIsDirty := False;
     ModalResult := mrOk;

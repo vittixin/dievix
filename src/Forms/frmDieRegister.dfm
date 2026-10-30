@@ -1,7 +1,7 @@
 object frmDieRegister: TfrmDieRegister
   Left = 0
   Top = 0
-  Caption = 'Die Master Register — Rotary Tooling Inventory'
+  Caption = 'Die Master Register - Rotary Tooling Inventory'
   ClientHeight = 700
   ClientWidth = 1100
   Color = clBtnFace
@@ -307,7 +307,7 @@ object frmDieRegister: TfrmDieRegister
     Left = 0
     Top = 174
     Width = 1100
-    Height = 45
+    Height = 80
     Align = alTop
     BevelOuter = bvNone
     Color = 15790320
@@ -404,6 +404,42 @@ object frmDieRegister: TfrmDieRegister
       Caption = 'Close'
       TabOrder = 9
       OnClick = btnCloseClick
+    end
+    object btnPrintCard: TButton
+      Left = 16
+      Top = 44
+      Width = 140
+      Height = 28
+      Caption = 'Print Job Card...'
+      TabOrder = 10
+      OnClick = btnPrintCardClick
+    end
+    object btnPrintCatalog: TButton
+      Left = 165
+      Top = 44
+      Width = 150
+      Height = 28
+      Caption = 'Catalog Report (PDF)...'
+      TabOrder = 11
+      OnClick = btnPrintCatalogClick
+    end
+    object btnExportXlsx: TButton
+      Left = 325
+      Top = 44
+      Width = 150
+      Height = 28
+      Caption = 'Catalog Export (Excel)...'
+      TabOrder = 12
+      OnClick = btnExportXlsxClick
+    end
+    object btnFleetMatrix: TButton
+      Left = 485
+      Top = 44
+      Width = 150
+      Height = 28
+      Caption = 'Fleet Matrix (PDF)...'
+      TabOrder = 13
+      OnClick = btnFleetMatrixClick
     end
   end
   object gridDies: TStringGrid

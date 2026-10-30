@@ -96,6 +96,15 @@ object frmDieEditor: TfrmDieEditor
       TabOrder = 2
       OnClick = btnCheckSimilarClick
     end
+    object btnPrintJobCard: TButton
+      Left = 185
+      Top = 10
+      Width = 150
+      Height = 30
+      Caption = 'Print Job Card...'
+      TabOrder = 3
+      OnClick = btnPrintJobCardClick
+    end
   end
   object pageDie: TPageControl
     Left = 0

@@ -2,8 +2,8 @@ object frmSettings: TfrmSettings
   Left = 0
   Top = 0
   BorderStyle = bsDialog
-  Caption = 'Application Settings — DieVix'
-  ClientHeight = 490
+  Caption = 'Application Settings - DieVix'
+  ClientHeight = 580
   ClientWidth = 560
   Color = clBtnFace
   Font.Charset = DEFAULT_CHARSET
@@ -43,7 +43,7 @@ object frmSettings: TfrmSettings
     Left = 0
     Top = 55
     Width = 560
-    Height = 375
+    Height = 465
     Align = alClient
     BevelOuter = bvNone
     Color = clWhite
@@ -202,10 +202,49 @@ object frmSettings: TfrmSettings
         Text = '3175'
       end
     end
+    object grpBackup: TGroupBox
+      Left = 20
+      Top = 365
+      Width = 520
+      Height = 85
+      Caption = ' Database & Report Backups '
+      TabOrder = 3
+      object lblBackupHelp: TLabel
+        Left = 20
+        Top = 24
+        Width = 280
+        Height = 45
+        Caption = 
+          'Create Firebird 5.0 database snapshots (.fbk), archive VittixR' +
+          'eport templates, or generate full-system packages.'
+        Font.Charset = DEFAULT_CHARSET
+        Font.Color = clGrayText
+        Font.Height = -12
+        Font.Name = 'Segoe UI'
+        Font.Style = [fsItalic]
+        ParentFont = False
+        WordWrap = True
+      end
+      object btnOpenBackupManager: TButton
+        Left = 310
+        Top = 28
+        Width = 190
+        Height = 36
+        Caption = '  '#128452' Backup Manager...'
+        Font.Charset = DEFAULT_CHARSET
+        Font.Color = clWindowText
+        Font.Height = -12
+        Font.Name = 'Segoe UI Semibold'
+        Font.Style = []
+        ParentFont = False
+        TabOrder = 0
+        OnClick = btnOpenBackupManagerClick
+      end
+    end
   end
   object pnlButtons: TPanel
     Left = 0
-    Top = 430
+    Top = 520
     Width = 560
     Height = 60
     Align = alBottom

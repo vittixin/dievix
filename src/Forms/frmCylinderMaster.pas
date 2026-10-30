@@ -1,7 +1,7 @@
 unit frmCylinderMaster;
 
 {==============================================================================
-  DieVix – Rotary Die & Keyline Manager
+  DieVix - Rotary Die & Keyline Manager
   Cylinder Fleet Master Form
 ==============================================================================}
 
@@ -186,7 +186,7 @@ begin
     lblRepeatDisplay.Caption := Format('%s mm (%s")', [FormatFloat('0.000', Mm), FormatFloat('0.000', Inch)]);
   end
   else
-    lblRepeatDisplay.Caption := '—';
+    lblRepeatDisplay.Caption := '-';
 end;
 
 procedure TfrmCylinderMaster.edtTeethChange(Sender: TObject);
@@ -234,7 +234,7 @@ begin
   P := StrToIntDef(Trim(edtPitch.Text), STANDARD_PITCH_UM);
   if P <= 0 then
   begin
-    ShowMessage('Please enter a valid positive pitch in micrometres (default 3175).');
+    ShowMessage(Format('Please enter a valid positive pitch in micrometres (default %d).', [STANDARD_PITCH_UM]));
     if Showing and edtPitch.CanFocus then
       edtPitch.SetFocus;
     Exit;

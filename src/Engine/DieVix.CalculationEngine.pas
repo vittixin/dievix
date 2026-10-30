@@ -1,7 +1,7 @@
 unit DieVix.CalculationEngine;
 
 {==============================================================================
-  DieVix – Rotary Die & Keyline Manager
+  DieVix - Rotary Die & Keyline Manager
   Precision Calculation Engine (Integer Micrometre Arithmetic)
   
   Description:
@@ -25,14 +25,15 @@ uses
 
 const
   { Standard gear pitch: 1/8" circular pitch = 3.175 mm = 3,175 um }
-  STANDARD_PITCH_UM: Integer = 3175;
+  STANDARD_PITCH_UM = 3175;
 
   { Millimetres per inch }
-  MM_PER_INCH: Double = 25.4;
+  MM_PER_INCH = 25.4;
 
   { Default gap policy thresholds in micrometres }
-  DEFAULT_MIN_GAP_UM: Int64 = 3000;         // 3.000 mm (Standard recommended threshold)
-  DEFAULT_HARD_BLOCK_GAP_UM: Int64 = 0;     // 0 = Disabled by default (separate policy)
+  DEFAULT_MIN_GAP_UM = 3000;         // 3.000 mm (Standard recommended threshold)
+  DEFAULT_HARD_BLOCK_GAP_UM = 0;     // 0 = Disabled by default (separate policy)
+  DEFAULT_MIN_GAP_MM = 3.0;
 
   { Standard production cylinder tooth counts (16 sizes in fleet) }
   DEFAULT_CYLINDER_FLEET: array[0..15] of Integer = (
@@ -47,6 +48,9 @@ type
     gsSubStandardWarning,  // Below MinGap; allowed with mandatory override reason
     gsMechanicallyRejected // Below HardBlock threshold (if enabled) or cut exceeds repeat
   );
+
+  { Flatbed Tooling Categories }
+  TFlatbedCategory = (fcRollForm, fcSheetForm);
 
   { Detailed result of an around gap computation }
   TGapResult = record
@@ -102,8 +106,8 @@ type
   function IsCylinderInFleet(const ATeeth: Integer; const AFleet: TArray<Integer> = nil): Boolean;
 
   { Cylinder repeat functions }
-  function TeethToRepeatUm(const ATeeth: Integer; const APitchUm: Integer = 3175): Int64; inline;
-  function TeethToRepeatMm(const ATeeth: Integer; const APitchUm: Integer = 3175): Double; inline;
+  function TeethToRepeatUm(const ATeeth: Integer; const APitchUm: Integer = STANDARD_PITCH_UM): Int64; inline;
+  function TeethToRepeatMm(const ATeeth: Integer; const APitchUm: Integer = STANDARD_PITCH_UM): Double; inline;
   function TeethToRepeatInch(const ATeeth: Integer): Double; inline;
 
   { Around gap computation }
@@ -111,9 +115,9 @@ type
     const ATeeth: Integer;
     const ALabelAroundUm: Int64;
     const AAroundUps: Integer;
-    const AMinGapUm: Int64 = 3000;
-    const AHardBlockGapUm: Int64 = 0;
-    const APitchUm: Integer = 3175;
+    const AMinGapUm: Int64 = DEFAULT_MIN_GAP_UM;
+    const AHardBlockGapUm: Int64 = DEFAULT_HARD_BLOCK_GAP_UM;
+    const APitchUm: Integer = STANDARD_PITCH_UM;
     const AAllowedFleet: TArray<Integer> = nil
   ): TGapResult;
 
@@ -121,9 +125,9 @@ type
     const ATeeth: Integer;
     const ALabelAroundMm: Double;
     const AAroundUps: Integer;
-    const AMinGapMm: Double = 3.0;
+    const AMinGapMm: Double = DEFAULT_MIN_GAP_MM;
     const AHardBlockGapMm: Double = 0.0;
-    const APitchUm: Integer = 3175;
+    const APitchUm: Integer = STANDARD_PITCH_UM;
     const AAllowedFleet: TArray<Integer> = nil
   ): TGapResult;
 
@@ -141,9 +145,10 @@ type
     const ALabelAroundMm: Double;
     const AMaxUps: Integer;
     const AAvailableTeeth: TArray<Integer>;
-    const AMinGapMm: Double = 3.0;
+    const AMinGapMm: Double = DEFAULT_MIN_GAP_MM;
     const AHardBlockGapMm: Double = 0.0;
-    const APitchUm: Integer = 3175
+    const APitchUm: Integer = STANDARD_PITCH_UM;
+    const AAllowedFleet: TArray<Integer> = nil
   ): TArray<TRecommendationResult>;
 
   { Find optimal single cylinder recommendation for a specific ups }
@@ -151,10 +156,45 @@ type
     const ALabelAroundMm: Double;
     const AUps: Integer;
     const AAvailableTeeth: TArray<Integer>;
-    const AMinGapMm: Double = 3.0;
+    const AMinGapMm: Double = DEFAULT_MIN_GAP_MM;
     const AHardBlockGapMm: Double = 0.0;
-    const APitchUm: Integer = 3175
+    const APitchUm: Integer = STANDARD_PITCH_UM;
+    const AAllowedFleet: TArray<Integer> = nil
   ): TRecommendationResult;
+
+  { Evaluates whether a flatbed die can be used bi-directionally (rotated 90 degrees)
+    Rule:
+      1. Category must be Rollform (fcRollForm).
+      2. If 1x1 ups: Can rotate in both directions.
+      3. If multi-ups: Can rotate ONLY if around size and across size are identical. }
+  function CanFlatbedDieRotate(
+    const ACategory: TFlatbedCategory;
+    const AAroundUps, AAcrossUps: Integer;
+    const AAroundSizeMm, AAcrossSizeMm: Double
+  ): Boolean; overload;
+
+  function CanFlatbedDieRotate(
+    const ACategoryStr: string;
+    const AAroundUps, AAcrossUps: Integer;
+    const AAroundSizeMm, AAcrossSizeMm: Double
+  ): Boolean; overload;
+
+  { Checks if flatbed die dimensions match a target dimension, evaluating both
+    normal orientation and 90-degree rotated orientation when rotation is supported }
+  function MatchesFlatbedDimensions(
+    const ADieAroundMm, ADieAcrossMm: Double;
+    const ATargetAroundMm, ATargetAcrossMm: Double;
+    const ACanRotate: Boolean;
+    out AIsRotated: Boolean;
+    const AToleranceMm: Double = 0.050
+  ): Boolean; overload;
+
+  function MatchesFlatbedDimensions(
+    const ADieAroundMm, ADieAcrossMm: Double;
+    const ATargetAroundMm, ATargetAcrossMm: Double;
+    const ACanRotate: Boolean;
+    const AToleranceMm: Double = 0.050
+  ): Boolean; overload;
 
 implementation
 
@@ -162,9 +202,37 @@ implementation
   Conversions
 ----------------------------------------------------------------------------- }
 
+{ Converts millimetres (Double) to integer micrometres (Int64).
+  Uses standard commercial rounding: round half away from zero,
+  avoiding Delphi's default banker's rounding (round to nearest even) which rounds
+  halfway values (like 0.5) to the nearest even number.
+  Because fractional decimal values cannot always be represented exactly in binary
+  floating point, their scaled values can fall infinitesimally below exact half-integers.
+  In 64-bit IEEE 754 Double precision, 0.5005 * 1000.0 = 500.49999999999994 is a genuine
+  example that falls slightly short of 500.5. In 32-bit x87 80-bit extended precision,
+  values like 2.9995 * 1000.0 similarly produce representation deficits below 2999.5
+  (whereas in plain IEEE Double, 2.9995 * 1000.0 equals exactly 2999.5).
+  A sub-picometre epsilon (1E-9) applied with the sign of the input ensures that
+  these decimal half-way boundaries round half away from zero as intended in shop-floor
+  specifications, without affecting values even 1 nanometre below (such as 0.000499 mm).
+  Examples:
+    +0.5005 mm   -> +501 um (IEEE 754 double-precision representation deficit)
+    -0.5005 mm   -> -501 um
+    +2.9995 mm   -> +3000 um (x87 80-bit extended-precision representation deficit)
+    -2.9995 mm   -> -3000 um
+    +0.0005 mm   -> +1 um
+    -0.0005 mm   -> -1 um
+    +0.000499 mm -> 0 um
+    -0.000499 mm -> 0 um
+    0.0 mm       -> 0 um }
 function MmToUm(const AMm: Double): Int64;
+const
+  Epsilon = 1E-9;
 begin
-  Result := Round(AMm * 1000.0);
+  if AMm >= 0.0 then
+    Result := Trunc(AMm * 1000.0 + 0.5 + Epsilon)
+  else
+    Result := Trunc(AMm * 1000.0 - 0.5 - Epsilon);
 end;
 
 function UmToMm(const AUm: Int64): Double;
@@ -346,6 +414,9 @@ function CheckAcrossFit(
   const AEdgeMarginMm: Double;
   const AMaxWebWidthMm: Double
 ): TWebFitResult;
+var
+  LabelAcrossUm, AcrossGapUm, EdgeMarginUm, MaxWebWidthUm: Int64;
+  ToolingWidthUm, RequiredWebWidthUm, ExcessUm: Int64;
 begin
   FillChar(Result, SizeOf(Result), 0);
   Result.AcrossUps := AAcrossUps;
@@ -354,27 +425,41 @@ begin
   Result.EdgeMarginMm := AEdgeMarginMm;
   Result.MaxWebWidthMm := AMaxWebWidthMm;
 
-  if (AAcrossUps <= 0) or (ALabelAcrossMm <= 0) then
+  if (AAcrossUps <= 0) or (ALabelAcrossMm <= 0.0) then
   begin
     Result.Fits := False;
     Exit;
   end;
 
+  LabelAcrossUm := MmToUm(ALabelAcrossMm);
+  AcrossGapUm := MmToUm(AAcrossGapMm);
+  EdgeMarginUm := MmToUm(AEdgeMarginMm);
+  MaxWebWidthUm := MmToUm(AMaxWebWidthMm);
+
   // Tooling width = (ups * label_width) + ((ups - 1) * across_gap)
-  Result.ToolingWidthMm := (AAcrossUps * ALabelAcrossMm);
+  ToolingWidthUm := Int64(AAcrossUps) * LabelAcrossUm;
   if AAcrossUps > 1 then
-    Result.ToolingWidthMm := Result.ToolingWidthMm + ((AAcrossUps - 1) * AAcrossGapMm);
+    ToolingWidthUm := ToolingWidthUm + (Int64(AAcrossUps - 1) * AcrossGapUm);
 
   // Total web required = Tooling width + 2 * edge margins
-  Result.RequiredWebWidthMm := Result.ToolingWidthMm + (2.0 * AEdgeMarginMm);
+  RequiredWebWidthUm := ToolingWidthUm + (2 * EdgeMarginUm);
 
-  if AMaxWebWidthMm <= 0 then
-    Result.Fits := True
+  Result.ToolingWidthMm := UmToMm(ToolingWidthUm);
+  Result.RequiredWebWidthMm := UmToMm(RequiredWebWidthUm);
+
+  if MaxWebWidthUm <= 0 then
+  begin
+    Result.Fits := True;
+    Result.ExcessMm := 0.0;
+  end
   else
   begin
-    Result.Fits := Result.RequiredWebWidthMm <= AMaxWebWidthMm;
+    Result.Fits := (RequiredWebWidthUm <= MaxWebWidthUm);
     if not Result.Fits then
-      Result.ExcessMm := Result.RequiredWebWidthMm - AMaxWebWidthMm
+    begin
+      ExcessUm := RequiredWebWidthUm - MaxWebWidthUm;
+      Result.ExcessMm := UmToMm(ExcessUm);
+    end
     else
       Result.ExcessMm := 0.0;
   end;
@@ -390,7 +475,8 @@ function FindOptimalCylinderForUps(
   const AAvailableTeeth: TArray<Integer>;
   const AMinGapMm: Double;
   const AHardBlockGapMm: Double;
-  const APitchUm: Integer
+  const APitchUm: Integer;
+  const AAllowedFleet: TArray<Integer>
 ): TRecommendationResult;
 var
   TeethList: TArray<Integer>;
@@ -401,9 +487,19 @@ var
   BestTeeth: Integer;
   BestGapRes: TGapResult;
   Found: Boolean;
+  FilteredList: TList<Integer>;
 begin
   FillChar(Result, SizeOf(Result), 0);
   Result.Ups := AUps;
+
+  if (AUps <= 0) or (ALabelAroundMm <= 0.0) then
+  begin
+    Result.Status := gsMechanicallyRejected;
+    Result.StatusText := 'Invalid input parameters (ups and label dimension must be > 0)';
+    Result.IsOptimal := False;
+    Result.RequiresOverrideReason := False;
+    Exit;
+  end;
 
   if Length(AAvailableTeeth) > 0 then
     TeethList := Copy(AAvailableTeeth)
@@ -412,6 +508,29 @@ begin
     SetLength(TeethList, Length(DEFAULT_CYLINDER_FLEET));
     for I := 0 to High(DEFAULT_CYLINDER_FLEET) do
       TeethList[I] := DEFAULT_CYLINDER_FLEET[I];
+  end;
+
+  // Apply optional machine / fleet compatibility filter if provided
+  if Length(AAllowedFleet) > 0 then
+  begin
+    FilteredList := TList<Integer>.Create;
+    try
+      for Teeth in TeethList do
+        if IsCylinderInFleet(Teeth, AAllowedFleet) then
+          FilteredList.Add(Teeth);
+      TeethList := FilteredList.ToArray;
+    finally
+      FilteredList.Free;
+    end;
+  end;
+
+  if Length(TeethList) = 0 then
+  begin
+    Result.Status := gsMechanicallyRejected;
+    Result.StatusText := 'No cylinders available in specified fleet';
+    Result.IsOptimal := False;
+    Result.RequiresOverrideReason := False;
+    Exit;
   end;
 
   TArray.Sort<Integer>(TeethList);
@@ -452,21 +571,18 @@ begin
   else
   begin
     // Fallback: Check if the largest available cylinder can at least fit with a warning
-    if Length(TeethList) > 0 then
-    begin
-      Teeth := TeethList[High(TeethList)];
-      GapRes := CalculateAroundGapFromMm(Teeth, ALabelAroundMm, AUps, AMinGapMm, AHardBlockGapMm, APitchUm);
-      Result.Teeth := Teeth;
-      Result.RepeatMm := GapRes.CylinderRepeatMm;
-      Result.RepeatInch := GapRes.CylinderRepeatInch;
-      Result.AroundGapMm := GapRes.AroundGapMm;
-      Result.AroundGapUm := GapRes.AroundGapUm;
-      Result.WastePercent := GapRes.WastePercent;
-      Result.Status := GapRes.Status;
-      Result.IsOptimal := False;
-      Result.RequiresOverrideReason := GapRes.RequiresOverrideReason;
-      Result.StatusText := GapRes.StatusMessage;
-    end;
+    Teeth := TeethList[High(TeethList)];
+    GapRes := CalculateAroundGapFromMm(Teeth, ALabelAroundMm, AUps, AMinGapMm, AHardBlockGapMm, APitchUm);
+    Result.Teeth := Teeth;
+    Result.RepeatMm := GapRes.CylinderRepeatMm;
+    Result.RepeatInch := GapRes.CylinderRepeatInch;
+    Result.AroundGapMm := GapRes.AroundGapMm;
+    Result.AroundGapUm := GapRes.AroundGapUm;
+    Result.WastePercent := GapRes.WastePercent;
+    Result.Status := GapRes.Status;
+    Result.IsOptimal := False;
+    Result.RequiresOverrideReason := GapRes.RequiresOverrideReason;
+    Result.StatusText := GapRes.StatusMessage;
   end;
 end;
 
@@ -476,7 +592,8 @@ function RecommendCylinders(
   const AAvailableTeeth: TArray<Integer>;
   const AMinGapMm: Double;
   const AHardBlockGapMm: Double;
-  const APitchUm: Integer
+  const APitchUm: Integer;
+  const AAllowedFleet: TArray<Integer>
 ): TArray<TRecommendationResult>;
 var
   TeethList: TArray<Integer>;
@@ -485,6 +602,7 @@ var
   CandidateList: TList<TRecommendationResult>;
   Rec: TRecommendationResult;
   SmallestLegalFoundForUps: Boolean;
+  FilteredList: TList<Integer>;
 begin
   if Length(AAvailableTeeth) > 0 then
     TeethList := Copy(AAvailableTeeth)
@@ -495,8 +613,24 @@ begin
       TeethList[I] := DEFAULT_CYLINDER_FLEET[I];
   end;
 
+  if Length(AAllowedFleet) > 0 then
+  begin
+    FilteredList := TList<Integer>.Create;
+    try
+      for Teeth in TeethList do
+        if IsCylinderInFleet(Teeth, AAllowedFleet) then
+          FilteredList.Add(Teeth);
+      TeethList := FilteredList.ToArray;
+    finally
+      FilteredList.Free;
+    end;
+  end;
+
   TArray.Sort<Integer>(TeethList);
   SetLength(Result, 0);
+
+  if Length(TeethList) = 0 then
+    Exit;
 
   CandidateList := TList<TRecommendationResult>.Create;
   try
@@ -541,6 +675,85 @@ begin
   finally
     CandidateList.Free;
   end;
+end;
+
+{ -----------------------------------------------------------------------------
+  Flatbed Tooling Arithmetic & Orientation Evaluation
+----------------------------------------------------------------------------- }
+
+function CanFlatbedDieRotate(
+  const ACategory: TFlatbedCategory;
+  const AAroundUps, AAcrossUps: Integer;
+  const AAroundSizeMm, AAcrossSizeMm: Double
+): Boolean;
+begin
+  // Only Rollform tooling supports bi-directional rotation
+  if (ACategory <> fcRollForm) then
+    Exit(False);
+
+  // 1x1 ups: always bi-directional (can be loaded around or across)
+  if (AAroundUps = 1) and (AAcrossUps = 1) then
+    Exit(True);
+
+  // Multi-ups: only bi-directional if around and across sizes are identical
+  Result := (Abs(AAroundSizeMm - AAcrossSizeMm) < 0.001);
+end;
+
+function CanFlatbedDieRotate(
+  const ACategoryStr: string;
+  const AAroundUps, AAcrossUps: Integer;
+  const AAroundSizeMm, AAcrossSizeMm: Double
+): Boolean;
+var
+  Cat: TFlatbedCategory;
+begin
+  if SameText(Trim(ACategoryStr), 'ROLL_FORM') or SameText(Trim(ACategoryStr), 'ROLLFORM') then
+    Cat := fcRollForm
+  else
+    Cat := fcSheetForm;
+
+  Result := CanFlatbedDieRotate(Cat, AAroundUps, AAcrossUps, AAroundSizeMm, AAcrossSizeMm);
+end;
+
+function MatchesFlatbedDimensions(
+  const ADieAroundMm, ADieAcrossMm: Double;
+  const ATargetAroundMm, ATargetAcrossMm: Double;
+  const ACanRotate: Boolean;
+  out AIsRotated: Boolean;
+  const AToleranceMm: Double
+): Boolean;
+begin
+  AIsRotated := False;
+
+  // Direct orientation match
+  if (Abs(ADieAroundMm - ATargetAroundMm) <= AToleranceMm) and
+     (Abs(ADieAcrossMm - ATargetAcrossMm) <= AToleranceMm) then
+    Exit(True);
+
+  // 90-degree rotated match if die supports rotation
+  if ACanRotate then
+  begin
+    if (Abs(ADieAroundMm - ATargetAcrossMm) <= AToleranceMm) and
+       (Abs(ADieAcrossMm - ATargetAroundMm) <= AToleranceMm) then
+    begin
+      AIsRotated := True;
+      Exit(True);
+    end;
+  end;
+
+  Result := False;
+end;
+
+function MatchesFlatbedDimensions(
+  const ADieAroundMm, ADieAcrossMm: Double;
+  const ATargetAroundMm, ATargetAcrossMm: Double;
+  const ACanRotate: Boolean;
+  const AToleranceMm: Double
+): Boolean;
+var
+  Rotated: Boolean;
+begin
+  Result := MatchesFlatbedDimensions(ADieAroundMm, ADieAcrossMm, ATargetAroundMm, ATargetAcrossMm, ACanRotate, Rotated, AToleranceMm);
 end;
 
 end.

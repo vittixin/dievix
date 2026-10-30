@@ -1,7 +1,7 @@
 object frmCylinderMaster: TfrmCylinderMaster
   Left = 0
   Top = 0
-  Caption = 'Cylinder Fleet Master — DieVix'
+  Caption = 'Cylinder Fleet Master - DieVix'
   ClientHeight = 520
   ClientWidth = 780
   Color = clBtnFace
@@ -122,7 +122,7 @@ object frmCylinderMaster: TfrmCylinderMaster
       Top = 35
       Width = 12
       Height = 15
-      Caption = '—'
+      Caption = '-'
       Font.Charset = DEFAULT_CHARSET
       Font.Color = clNavy
       Font.Height = -12

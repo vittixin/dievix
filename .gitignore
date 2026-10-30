@@ -21,3 +21,8 @@ __recovery/
 # Logs & temp
 *.tmp
 tmp/
+
+# Configuration
+DieVix.ini
+DieVixTests.ini
+
