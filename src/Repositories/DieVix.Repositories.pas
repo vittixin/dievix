@@ -122,8 +122,8 @@ type
     function CanPermanentlyDelete(const AID: Integer; out ARefusalReason: string): Boolean;
     function PermanentlyDelete(const AID: Integer): Boolean;
     function SerialExists(const ASerialNo: string; const AExcludeID: Integer = 0): Boolean;
-    function ChangeStatus(const AID: Integer; const ANewStatusCode, AReason, AUser: string): Boolean;
-    function UpdateLocation(const AID: Integer; const ARack, AShelf, ABin, ANotes, AUser: string): Boolean;
+    function ChangeStatus(const AID: Integer; const ANewStatusCode, AReason, AUser: string; const AExpectedVersion: Integer = 0): Boolean;
+    function UpdateLocation(const AID: Integer; const ARack, AShelf, ABin, ANotes, AUser: string; const AExpectedVersion: Integer = 0): Boolean;
     function FindSimilarDies(
       const ATeeth: Integer;
       const AAroundSizeMm, AAcrossSizeMm: Double;
@@ -1206,13 +1206,13 @@ begin
 
   Result.RepeatMm := TeethToRepeatMm(Result.Teeth, Result.PitchUm);
   Result.RepeatInch := TeethToRepeatInch(Result.Teeth);
-  Result.AroundSizeMm := Qry.FieldByName('AROUND_SIZE_MM').AsFloat;
-  Result.AcrossSizeMm := Qry.FieldByName('ACROSS_SIZE_MM').AsFloat;
+  Result.AroundSizeMm := Qry.FieldByName('AROUND_SIZE_MM').AsCurrency;
+  Result.AcrossSizeMm := Qry.FieldByName('ACROSS_SIZE_MM').AsCurrency;
   Result.AroundUps := Qry.FieldByName('AROUND_UPS').AsInteger;
   Result.AcrossUps := Qry.FieldByName('ACROSS_UPS').AsInteger;
-  Result.AroundGapMm := Qry.FieldByName('AROUND_GAP_MM').AsFloat;
-  Result.AcrossGapMm := Qry.FieldByName('ACROSS_GAP_MM').AsFloat;
-  Result.CornerRadiusMm := Qry.FieldByName('CORNER_RADIUS_MM').AsFloat;
+  Result.AroundGapMm := Qry.FieldByName('AROUND_GAP_MM').AsCurrency;
+  Result.AcrossGapMm := Qry.FieldByName('ACROSS_GAP_MM').AsCurrency;
+  Result.CornerRadiusMm := Qry.FieldByName('CORNER_RADIUS_MM').AsCurrency;
   Result.Shape := Qry.FieldByName('SHAPE').AsString;
   Result.CutType := Qry.FieldByName('CUT_TYPE').AsString;
 
@@ -1226,6 +1226,18 @@ begin
   Result.BadgeColor := Qry.FieldByName('BADGE_COLOR').AsString;
   Result.OverrideReason := Qry.FieldByName('OVERRIDE_REASON').AsString;
   Result.GapPolicyStatus := Qry.FieldByName('GAP_POLICY_STATUS').AsString;
+
+  if Qry.FindField('AROUND_GAP_UM') <> nil then
+    Result.AroundGapUm := Qry.FieldByName('AROUND_GAP_UM').AsLargeInt
+  else
+    Result.AroundGapUm := MmToUm(Result.AroundGapMm);
+
+  if Qry.FindField('GAP_STATUS') <> nil then
+    Result.GapStatus := Qry.FieldByName('GAP_STATUS').AsString
+  else
+    Result.GapStatus := Result.GapPolicyStatus;
+  if Result.GapPolicyStatus = '' then
+    Result.GapPolicyStatus := Result.GapStatus;
 
   if not Qry.FieldByName('PURCHASE_DATE').IsNull then
     Result.PurchaseDate := Qry.FieldByName('PURCHASE_DATE').AsDateTime
@@ -1346,10 +1358,10 @@ begin
     end;
 
     if AFilter.OnlySub3mm then
-      Sql := Sql + ' AND (AROUND_GAP_MM < 3.000) ';
+      Sql := Sql + ' AND (AROUND_GAP_UM < (SELECT COALESCE(CAST(SETTING_VALUE AS BIGINT), 3000) FROM APP_SETTING WHERE SETTING_KEY = ''MIN_AROUND_GAP_UM'')) ';
 
     if AFilter.ActiveOnly then
-      Sql := Sql + ' AND (STATUS_CODE IN (''ACTIVE'', ''AVAILABLE'', ''IN_USE'')) '
+      Sql := Sql + ' AND (STATUS_CODE IN (SELECT CODE FROM DIE_STATUS WHERE IS_USABLE = 1)) '
     else if Trim(AFilter.StatusCode) <> '' then
       Sql := Sql + ' AND (STATUS_CODE = :STATUS) '
     else if not AFilter.IncludeArchived then
@@ -1389,113 +1401,140 @@ function TDieRepository.Insert(var ADie: TDie): Integer;
 var
   Qry: TFDQuery;
   Audit: TDieAuditEntry;
+  Conn: TFDConnection;
 begin
   Result := 0;
-  Qry := CreateQuery;
+  Conn := GetConn;
+  if not Conn.InTransaction then
+    Conn.StartTransaction;
   try
-    Qry.SQL.Text :=
-      'INSERT INTO DIE (' +
-      '  SERIAL_NO, DESCRIPTION, INTERNAL_REF, CUSTOMER_REF, ' +
-      '  CUSTOMER_ID, MEDIA_ID, TEETH, PITCH_UM, ' +
-      '  AROUND_SIZE_MM, ACROSS_SIZE_MM, AROUND_UPS, ACROSS_UPS, ' +
-      '  ACROSS_GAP_MM, CORNER_RADIUS_MM, SHAPE, CUT_TYPE, ' +
-      '  STORAGE_LOCATION, STORAGE_RACK, STORAGE_SHELF, STORAGE_BIN, ' +
-      '  STATUS_CODE, OVERRIDE_REASON, PURCHASE_DATE, RECEIVED_DATE, ' +
-      '  DIE_MAKER, SUPPLIER_REF, TOTAL_RUN_METRES, NOTES, ' +
-      '  CREATED_BY, UPDATED_BY, VERSION' +
-      ') VALUES (' +
-      '  :SERIAL_NO, :DESCRIPTION, :INTERNAL_REF, :CUSTOMER_REF, ' +
-      '  :CUSTOMER_ID, :MEDIA_ID, :TEETH, :PITCH_UM, ' +
-      '  :AROUND_SIZE_MM, :ACROSS_SIZE_MM, :AROUND_UPS, :ACROSS_UPS, ' +
-      '  :ACROSS_GAP_MM, :CORNER_RADIUS_MM, :SHAPE, :CUT_TYPE, ' +
-      '  :STORAGE_LOCATION, :STORAGE_RACK, :STORAGE_SHELF, :STORAGE_BIN, ' +
-      '  :STATUS_CODE, :OVERRIDE_REASON, :PURCHASE_DATE, :RECEIVED_DATE, ' +
-      '  :DIE_MAKER, :SUPPLIER_REF, :TOTAL_RUN_METRES, :NOTES, ' +
-      '  :CREATED_BY, :UPDATED_BY, 1' +
-      ') RETURNING ID';
+    Qry := CreateQuery;
+    try
+      Qry.SQL.Text :=
+        'INSERT INTO DIE (' +
+        '  SERIAL_NO, DESCRIPTION, INTERNAL_REF, CUSTOMER_REF, ' +
+        '  CUSTOMER_ID, MEDIA_ID, TEETH, PITCH_UM, ' +
+        '  AROUND_SIZE_MM, ACROSS_SIZE_MM, AROUND_UPS, ACROSS_UPS, ' +
+        '  ACROSS_GAP_MM, CORNER_RADIUS_MM, SHAPE, CUT_TYPE, ' +
+        '  STORAGE_LOCATION, STORAGE_RACK, STORAGE_SHELF, STORAGE_BIN, ' +
+        '  STATUS_CODE, OVERRIDE_REASON, PURCHASE_DATE, RECEIVED_DATE, ' +
+        '  DIE_MAKER, SUPPLIER_REF, TOTAL_RUN_METRES, NOTES, ' +
+        '  AROUND_GAP_UM, GAP_STATUS, ' +
+        '  CREATED_BY, UPDATED_BY, VERSION' +
+        ') VALUES (' +
+        '  :SERIAL_NO, :DESCRIPTION, :INTERNAL_REF, :CUSTOMER_REF, ' +
+        '  :CUSTOMER_ID, :MEDIA_ID, :TEETH, :PITCH_UM, ' +
+        '  :AROUND_SIZE_MM, :ACROSS_SIZE_MM, :AROUND_UPS, :ACROSS_UPS, ' +
+        '  :ACROSS_GAP_MM, :CORNER_RADIUS_MM, :SHAPE, :CUT_TYPE, ' +
+        '  :STORAGE_LOCATION, :STORAGE_RACK, :STORAGE_SHELF, :STORAGE_BIN, ' +
+        '  :STATUS_CODE, :OVERRIDE_REASON, :PURCHASE_DATE, :RECEIVED_DATE, ' +
+        '  :DIE_MAKER, :SUPPLIER_REF, :TOTAL_RUN_METRES, :NOTES, ' +
+        '  :AROUND_GAP_UM, :GAP_STATUS, ' +
+        '  :CREATED_BY, :UPDATED_BY, 1' +
+        ') RETURNING ID';
 
-    Qry.ParamByName('SERIAL_NO').AsString := Trim(ADie.SerialNo);
-    Qry.ParamByName('DESCRIPTION').AsString := Trim(ADie.Description);
-    Qry.ParamByName('INTERNAL_REF').AsString := Trim(ADie.InternalRef);
-    Qry.ParamByName('CUSTOMER_REF').AsString := Trim(ADie.CustomerRef);
+      Qry.ParamByName('SERIAL_NO').AsString := Trim(ADie.SerialNo);
+      Qry.ParamByName('DESCRIPTION').AsString := Trim(ADie.Description);
+      Qry.ParamByName('INTERNAL_REF').AsString := Trim(ADie.InternalRef);
+      Qry.ParamByName('CUSTOMER_REF').AsString := Trim(ADie.CustomerRef);
 
-    if ADie.CustomerID > 0 then
-      Qry.ParamByName('CUSTOMER_ID').AsInteger := ADie.CustomerID
-    else
-      Qry.ParamByName('CUSTOMER_ID').Clear;
+      if ADie.CustomerID > 0 then
+        Qry.ParamByName('CUSTOMER_ID').AsInteger := ADie.CustomerID
+      else
+        Qry.ParamByName('CUSTOMER_ID').Clear;
 
-    if ADie.MediaID > 0 then
-      Qry.ParamByName('MEDIA_ID').AsInteger := ADie.MediaID
-    else
-      Qry.ParamByName('MEDIA_ID').Clear;
+      if ADie.MediaID > 0 then
+        Qry.ParamByName('MEDIA_ID').AsInteger := ADie.MediaID
+      else
+        Qry.ParamByName('MEDIA_ID').Clear;
 
-    Qry.ParamByName('TEETH').AsInteger := ADie.Teeth;
+      Qry.ParamByName('TEETH').AsInteger := ADie.Teeth;
 
-    if ADie.PitchUm <= 0 then
-      ADie.PitchUm := STANDARD_PITCH_UM;
-    Qry.ParamByName('PITCH_UM').AsInteger := ADie.PitchUm;
+      if ADie.PitchUm <= 0 then
+        ADie.PitchUm := STANDARD_PITCH_UM;
+      Qry.ParamByName('PITCH_UM').AsInteger := ADie.PitchUm;
 
-    Qry.ParamByName('AROUND_SIZE_MM').AsFloat := ADie.AroundSizeMm;
-    Qry.ParamByName('ACROSS_SIZE_MM').AsFloat := ADie.AcrossSizeMm;
-    Qry.ParamByName('AROUND_UPS').AsInteger := ADie.AroundUps;
-    Qry.ParamByName('ACROSS_UPS').AsInteger := ADie.AcrossUps;
-    Qry.ParamByName('ACROSS_GAP_MM').AsFloat := ADie.AcrossGapMm;
-    Qry.ParamByName('CORNER_RADIUS_MM').AsFloat := ADie.CornerRadiusMm;
-    Qry.ParamByName('SHAPE').AsString := Trim(ADie.Shape);
-    if ADie.CutType <> '' then
-      Qry.ParamByName('CUT_TYPE').AsString := Trim(ADie.CutType)
-    else
-      Qry.ParamByName('CUT_TYPE').AsString := 'ROTARY';
+      Qry.ParamByName('AROUND_SIZE_MM').AsCurrency := ADie.AroundSizeMm;
+      Qry.ParamByName('ACROSS_SIZE_MM').AsCurrency := ADie.AcrossSizeMm;
+      Qry.ParamByName('AROUND_UPS').AsInteger := ADie.AroundUps;
+      Qry.ParamByName('ACROSS_UPS').AsInteger := ADie.AcrossUps;
+      Qry.ParamByName('ACROSS_GAP_MM').AsCurrency := ADie.AcrossGapMm;
+      Qry.ParamByName('CORNER_RADIUS_MM').AsCurrency := ADie.CornerRadiusMm;
+      Qry.ParamByName('AROUND_GAP_UM').AsLargeInt := ADie.AroundGapUm;
+      if ADie.GapStatus <> '' then
+        Qry.ParamByName('GAP_STATUS').AsString := ADie.GapStatus
+      else
+        Qry.ParamByName('GAP_STATUS').AsString := 'APPROVED';
+      Qry.ParamByName('SHAPE').AsString := Trim(ADie.Shape);
+      if ADie.CutType <> '' then
+        Qry.ParamByName('CUT_TYPE').AsString := Trim(ADie.CutType)
+      else
+        Qry.ParamByName('CUT_TYPE').AsString := 'ROTARY';
 
-    Qry.ParamByName('STORAGE_LOCATION').AsString := Trim(ADie.StorageLocation);
-    Qry.ParamByName('STORAGE_RACK').AsString := Trim(ADie.StorageRack);
-    Qry.ParamByName('STORAGE_SHELF').AsString := Trim(ADie.StorageShelf);
-    Qry.ParamByName('STORAGE_BIN').AsString := Trim(ADie.StorageBin);
+      Qry.ParamByName('STORAGE_LOCATION').AsString := Trim(ADie.StorageLocation);
+      Qry.ParamByName('STORAGE_RACK').AsString := Trim(ADie.StorageRack);
+      Qry.ParamByName('STORAGE_SHELF').AsString := Trim(ADie.StorageShelf);
+      Qry.ParamByName('STORAGE_BIN').AsString := Trim(ADie.StorageBin);
 
-    if Trim(ADie.StatusCode) <> '' then
-      Qry.ParamByName('STATUS_CODE').AsString := Trim(ADie.StatusCode)
-    else
-      Qry.ParamByName('STATUS_CODE').AsString := 'ACTIVE';
+      if Trim(ADie.StatusCode) <> '' then
+        Qry.ParamByName('STATUS_CODE').AsString := Trim(ADie.StatusCode)
+      else
+        Qry.ParamByName('STATUS_CODE').AsString := 'ACTIVE';
 
-    Qry.ParamByName('OVERRIDE_REASON').AsString := Trim(ADie.OverrideReason);
+      Qry.ParamByName('OVERRIDE_REASON').AsString := Trim(ADie.OverrideReason);
 
-    if ADie.PurchaseDate > 0 then
-      Qry.ParamByName('PURCHASE_DATE').AsDate := Trunc(ADie.PurchaseDate)
-    else
-      Qry.ParamByName('PURCHASE_DATE').Clear;
+      if ADie.PurchaseDate > 0 then
+        Qry.ParamByName('PURCHASE_DATE').AsDate := Trunc(ADie.PurchaseDate)
+      else
+        Qry.ParamByName('PURCHASE_DATE').Clear;
 
-    if ADie.ReceivedDate > 0 then
-      Qry.ParamByName('RECEIVED_DATE').AsDate := Trunc(ADie.ReceivedDate)
-    else
-      Qry.ParamByName('RECEIVED_DATE').Clear;
+      if ADie.ReceivedDate > 0 then
+        Qry.ParamByName('RECEIVED_DATE').AsDate := Trunc(ADie.ReceivedDate)
+      else
+        Qry.ParamByName('RECEIVED_DATE').Clear;
 
-    Qry.ParamByName('DIE_MAKER').AsString := Trim(ADie.DieMaker);
-    Qry.ParamByName('SUPPLIER_REF').AsString := Trim(ADie.SupplierRef);
-    Qry.ParamByName('TOTAL_RUN_METRES').AsInteger := ADie.TotalRunMetres;
-    Qry.ParamByName('NOTES').AsString := Trim(ADie.Notes);
+      Qry.ParamByName('DIE_MAKER').AsString := Trim(ADie.DieMaker);
+      Qry.ParamByName('SUPPLIER_REF').AsString := Trim(ADie.SupplierRef);
+      Qry.ParamByName('TOTAL_RUN_METRES').AsInteger := ADie.TotalRunMetres;
+      Qry.ParamByName('NOTES').AsString := Trim(ADie.Notes);
 
-    if (Trim(ADie.CreatedBy) <> '') and not SameText(Trim(ADie.CreatedBy), 'OPERATOR') then
-      Qry.ParamByName('CREATED_BY').AsString := Trim(ADie.CreatedBy)
-    else
-      Qry.ParamByName('CREATED_BY').AsString := GetCurrentAppUser;
+      if (Trim(ADie.CreatedBy) <> '') and not SameText(Trim(ADie.CreatedBy), 'OPERATOR') then
+        Qry.ParamByName('CREATED_BY').AsString := Trim(ADie.CreatedBy)
+      else
+        Qry.ParamByName('CREATED_BY').AsString := GetCurrentAppUser;
 
-    if (Trim(ADie.UpdatedBy) <> '') and not SameText(Trim(ADie.UpdatedBy), 'OPERATOR') then
-      Qry.ParamByName('UPDATED_BY').AsString := Trim(ADie.UpdatedBy)
-    else
-      Qry.ParamByName('UPDATED_BY').AsString := GetCurrentAppUser;
+      if (Trim(ADie.UpdatedBy) <> '') and not SameText(Trim(ADie.UpdatedBy), 'OPERATOR') then
+        Qry.ParamByName('UPDATED_BY').AsString := Trim(ADie.UpdatedBy)
+      else
+        Qry.ParamByName('UPDATED_BY').AsString := GetCurrentAppUser;
 
-    Qry.Open;
-    Result := Qry.Fields[0].AsInteger;
-    ADie.ID := Result;
-    ADie.Version := 1;
-    Qry.Close;
+      Qry.Open;
+      Result := Qry.Fields[0].AsInteger;
+      ADie.ID := Result;
+      ADie.Version := 1;
+      Qry.Close;
 
-    // Log Creation Audit Entry
-    Audit := TDieAuditEntry.CreateEntry(Result, 'CREATE', 'Die tooling registered', ADie.CreatedBy, ADie.SerialNo);
-    Audit.OverrideReason := ADie.OverrideReason;
-    AddAuditEntry(Audit);
-  finally
-    Qry.Free;
+      // Log Creation Audit Entry inside the same transaction
+      Audit := TDieAuditEntry.CreateEntry(Result, 'CREATE', 'Die tooling registered', ADie.CreatedBy, ADie.SerialNo);
+      Audit.OverrideReason := ADie.OverrideReason;
+      AddAuditEntry(Audit);
+
+      if Conn.InTransaction then
+        Conn.Commit;
+    finally
+      Qry.Free;
+    end;
+  except
+    on E: Exception do
+    begin
+      if Conn.InTransaction then
+        Conn.Rollback;
+      var ConcurEx := TranslateDBException(E);
+      if ConcurEx <> nil then
+        raise ConcurEx
+      else
+        raise;
+    end;
   end;
 end;
 
@@ -1503,120 +1542,153 @@ function TDieRepository.Update(const ADie: TDie): Boolean;
 var
   Qry: TFDQuery;
   Audit: TDieAuditEntry;
+  Conn: TFDConnection;
 begin
   Result := False;
-  Qry := CreateQuery;
+  Conn := GetConn;
+  if not Conn.InTransaction then
+    Conn.StartTransaction;
   try
-    Qry.SQL.Text :=
-      'UPDATE DIE SET ' +
-      '  SERIAL_NO = :SERIAL_NO, ' +
-      '  DESCRIPTION = :DESCRIPTION, ' +
-      '  INTERNAL_REF = :INTERNAL_REF, ' +
-      '  CUSTOMER_REF = :CUSTOMER_REF, ' +
-      '  CUSTOMER_ID = :CUSTOMER_ID, ' +
-      '  MEDIA_ID = :MEDIA_ID, ' +
-      '  TEETH = :TEETH, ' +
-      '  PITCH_UM = :PITCH_UM, ' +
-      '  AROUND_SIZE_MM = :AROUND_SIZE_MM, ' +
-      '  ACROSS_SIZE_MM = :ACROSS_SIZE_MM, ' +
-      '  AROUND_UPS = :AROUND_UPS, ' +
-      '  ACROSS_UPS = :ACROSS_UPS, ' +
-      '  ACROSS_GAP_MM = :ACROSS_GAP_MM, ' +
-      '  CORNER_RADIUS_MM = :CORNER_RADIUS_MM, ' +
-      '  SHAPE = :SHAPE, ' +
-      '  CUT_TYPE = :CUT_TYPE, ' +
-      '  STORAGE_LOCATION = :STORAGE_LOCATION, ' +
-      '  STORAGE_RACK = :STORAGE_RACK, ' +
-      '  STORAGE_SHELF = :STORAGE_SHELF, ' +
-      '  STORAGE_BIN = :STORAGE_BIN, ' +
-      '  STATUS_CODE = :STATUS_CODE, ' +
-      '  OVERRIDE_REASON = :OVERRIDE_REASON, ' +
-      '  PURCHASE_DATE = :PURCHASE_DATE, ' +
-      '  RECEIVED_DATE = :RECEIVED_DATE, ' +
-      '  DIE_MAKER = :DIE_MAKER, ' +
-      '  SUPPLIER_REF = :SUPPLIER_REF, ' +
-      '  TOTAL_RUN_METRES = :TOTAL_RUN_METRES, ' +
-      '  NOTES = :NOTES, ' +
-      '  UPDATED_BY = :UPDATED_BY, ' +
-      '  UPDATED_AT = CURRENT_TIMESTAMP, ' +
-      '  VERSION = VERSION + 1 ' +
-      'WHERE ID = :ID AND VERSION = :ORIG_VER';
+    Qry := CreateQuery;
+    try
+      Qry.SQL.Text :=
+        'UPDATE DIE SET ' +
+        '  SERIAL_NO = :SERIAL_NO, ' +
+        '  DESCRIPTION = :DESCRIPTION, ' +
+        '  INTERNAL_REF = :INTERNAL_REF, ' +
+        '  CUSTOMER_REF = :CUSTOMER_REF, ' +
+        '  CUSTOMER_ID = :CUSTOMER_ID, ' +
+        '  MEDIA_ID = :MEDIA_ID, ' +
+        '  TEETH = :TEETH, ' +
+        '  PITCH_UM = :PITCH_UM, ' +
+        '  AROUND_SIZE_MM = :AROUND_SIZE_MM, ' +
+        '  ACROSS_SIZE_MM = :ACROSS_SIZE_MM, ' +
+        '  AROUND_UPS = :AROUND_UPS, ' +
+        '  ACROSS_UPS = :ACROSS_UPS, ' +
+        '  ACROSS_GAP_MM = :ACROSS_GAP_MM, ' +
+        '  CORNER_RADIUS_MM = :CORNER_RADIUS_MM, ' +
+        '  AROUND_GAP_UM = :AROUND_GAP_UM, ' +
+        '  GAP_STATUS = :GAP_STATUS, ' +
+        '  SHAPE = :SHAPE, ' +
+        '  CUT_TYPE = :CUT_TYPE, ' +
+        '  STORAGE_LOCATION = :STORAGE_LOCATION, ' +
+        '  STORAGE_RACK = :STORAGE_RACK, ' +
+        '  STORAGE_SHELF = :STORAGE_SHELF, ' +
+        '  STORAGE_BIN = :STORAGE_BIN, ' +
+        '  STATUS_CODE = :STATUS_CODE, ' +
+        '  OVERRIDE_REASON = :OVERRIDE_REASON, ' +
+        '  PURCHASE_DATE = :PURCHASE_DATE, ' +
+        '  RECEIVED_DATE = :RECEIVED_DATE, ' +
+        '  DIE_MAKER = :DIE_MAKER, ' +
+        '  SUPPLIER_REF = :SUPPLIER_REF, ' +
+        '  TOTAL_RUN_METRES = :TOTAL_RUN_METRES, ' +
+        '  NOTES = :NOTES, ' +
+        '  UPDATED_BY = :UPDATED_BY, ' +
+        '  UPDATED_AT = CURRENT_TIMESTAMP, ' +
+        '  VERSION = VERSION + 1 ' +
+        'WHERE ID = :ID AND VERSION = :ORIG_VER';
 
-    Qry.ParamByName('SERIAL_NO').AsString := Trim(ADie.SerialNo);
-    Qry.ParamByName('DESCRIPTION').AsString := Trim(ADie.Description);
-    Qry.ParamByName('INTERNAL_REF').AsString := Trim(ADie.InternalRef);
-    Qry.ParamByName('CUSTOMER_REF').AsString := Trim(ADie.CustomerRef);
+      Qry.ParamByName('SERIAL_NO').AsString := Trim(ADie.SerialNo);
+      Qry.ParamByName('DESCRIPTION').AsString := Trim(ADie.Description);
+      Qry.ParamByName('INTERNAL_REF').AsString := Trim(ADie.InternalRef);
+      Qry.ParamByName('CUSTOMER_REF').AsString := Trim(ADie.CustomerRef);
 
-    if ADie.CustomerID > 0 then
-      Qry.ParamByName('CUSTOMER_ID').AsInteger := ADie.CustomerID
-    else
-      Qry.ParamByName('CUSTOMER_ID').Clear;
+      if ADie.CustomerID > 0 then
+        Qry.ParamByName('CUSTOMER_ID').AsInteger := ADie.CustomerID
+      else
+        Qry.ParamByName('CUSTOMER_ID').Clear;
 
-    if ADie.MediaID > 0 then
-      Qry.ParamByName('MEDIA_ID').AsInteger := ADie.MediaID
-    else
-      Qry.ParamByName('MEDIA_ID').Clear;
+      if ADie.MediaID > 0 then
+        Qry.ParamByName('MEDIA_ID').AsInteger := ADie.MediaID
+      else
+        Qry.ParamByName('MEDIA_ID').Clear;
 
-    Qry.ParamByName('TEETH').AsInteger := ADie.Teeth;
+      Qry.ParamByName('TEETH').AsInteger := ADie.Teeth;
 
-    if ADie.PitchUm <= 0 then
-      Qry.ParamByName('PITCH_UM').AsInteger := STANDARD_PITCH_UM
-    else
-      Qry.ParamByName('PITCH_UM').AsInteger := ADie.PitchUm;
+      if ADie.PitchUm <= 0 then
+        Qry.ParamByName('PITCH_UM').AsInteger := STANDARD_PITCH_UM
+      else
+        Qry.ParamByName('PITCH_UM').AsInteger := ADie.PitchUm;
 
-    Qry.ParamByName('AROUND_SIZE_MM').AsFloat := ADie.AroundSizeMm;
-    Qry.ParamByName('ACROSS_SIZE_MM').AsFloat := ADie.AcrossSizeMm;
-    Qry.ParamByName('AROUND_UPS').AsInteger := ADie.AroundUps;
-    Qry.ParamByName('ACROSS_UPS').AsInteger := ADie.AcrossUps;
-    Qry.ParamByName('ACROSS_GAP_MM').AsFloat := ADie.AcrossGapMm;
-    Qry.ParamByName('CORNER_RADIUS_MM').AsFloat := ADie.CornerRadiusMm;
-    Qry.ParamByName('SHAPE').AsString := Trim(ADie.Shape);
-    if ADie.CutType <> '' then
-      Qry.ParamByName('CUT_TYPE').AsString := Trim(ADie.CutType)
-    else
-      Qry.ParamByName('CUT_TYPE').AsString := 'ROTARY';
+      Qry.ParamByName('AROUND_SIZE_MM').AsCurrency := ADie.AroundSizeMm;
+      Qry.ParamByName('ACROSS_SIZE_MM').AsCurrency := ADie.AcrossSizeMm;
+      Qry.ParamByName('AROUND_UPS').AsInteger := ADie.AroundUps;
+      Qry.ParamByName('ACROSS_UPS').AsInteger := ADie.AcrossUps;
+      Qry.ParamByName('ACROSS_GAP_MM').AsCurrency := ADie.AcrossGapMm;
+      Qry.ParamByName('CORNER_RADIUS_MM').AsCurrency := ADie.CornerRadiusMm;
+      Qry.ParamByName('AROUND_GAP_UM').AsLargeInt := ADie.AroundGapUm;
+      if ADie.GapStatus <> '' then
+        Qry.ParamByName('GAP_STATUS').AsString := ADie.GapStatus
+      else
+        Qry.ParamByName('GAP_STATUS').AsString := 'APPROVED';
+      Qry.ParamByName('SHAPE').AsString := Trim(ADie.Shape);
+      if ADie.CutType <> '' then
+        Qry.ParamByName('CUT_TYPE').AsString := Trim(ADie.CutType)
+      else
+        Qry.ParamByName('CUT_TYPE').AsString := 'ROTARY';
 
-    Qry.ParamByName('STORAGE_LOCATION').AsString := Trim(ADie.StorageLocation);
-    Qry.ParamByName('STORAGE_RACK').AsString := Trim(ADie.StorageRack);
-    Qry.ParamByName('STORAGE_SHELF').AsString := Trim(ADie.StorageShelf);
-    Qry.ParamByName('STORAGE_BIN').AsString := Trim(ADie.StorageBin);
-    Qry.ParamByName('STATUS_CODE').AsString := Trim(ADie.StatusCode);
-    Qry.ParamByName('OVERRIDE_REASON').AsString := Trim(ADie.OverrideReason);
+      Qry.ParamByName('STORAGE_LOCATION').AsString := Trim(ADie.StorageLocation);
+      Qry.ParamByName('STORAGE_RACK').AsString := Trim(ADie.StorageRack);
+      Qry.ParamByName('STORAGE_SHELF').AsString := Trim(ADie.StorageShelf);
+      Qry.ParamByName('STORAGE_BIN').AsString := Trim(ADie.StorageBin);
+      Qry.ParamByName('STATUS_CODE').AsString := Trim(ADie.StatusCode);
+      Qry.ParamByName('OVERRIDE_REASON').AsString := Trim(ADie.OverrideReason);
 
-    if ADie.PurchaseDate > 0 then
-      Qry.ParamByName('PURCHASE_DATE').AsDate := Trunc(ADie.PurchaseDate)
-    else
-      Qry.ParamByName('PURCHASE_DATE').Clear;
+      if ADie.PurchaseDate > 0 then
+        Qry.ParamByName('PURCHASE_DATE').AsDate := Trunc(ADie.PurchaseDate)
+      else
+        Qry.ParamByName('PURCHASE_DATE').Clear;
 
-    if ADie.ReceivedDate > 0 then
-      Qry.ParamByName('RECEIVED_DATE').AsDate := Trunc(ADie.ReceivedDate)
-    else
-      Qry.ParamByName('RECEIVED_DATE').Clear;
+      if ADie.ReceivedDate > 0 then
+        Qry.ParamByName('RECEIVED_DATE').AsDate := Trunc(ADie.ReceivedDate)
+      else
+        Qry.ParamByName('RECEIVED_DATE').Clear;
 
-    Qry.ParamByName('DIE_MAKER').AsString := Trim(ADie.DieMaker);
-    Qry.ParamByName('SUPPLIER_REF').AsString := Trim(ADie.SupplierRef);
-    Qry.ParamByName('TOTAL_RUN_METRES').AsInteger := ADie.TotalRunMetres;
-    Qry.ParamByName('NOTES').AsString := Trim(ADie.Notes);
+      Qry.ParamByName('DIE_MAKER').AsString := Trim(ADie.DieMaker);
+      Qry.ParamByName('SUPPLIER_REF').AsString := Trim(ADie.SupplierRef);
+      Qry.ParamByName('TOTAL_RUN_METRES').AsInteger := ADie.TotalRunMetres;
+      Qry.ParamByName('NOTES').AsString := Trim(ADie.Notes);
 
-    if (Trim(ADie.UpdatedBy) <> '') and not SameText(Trim(ADie.UpdatedBy), 'OPERATOR') then
-      Qry.ParamByName('UPDATED_BY').AsString := Trim(ADie.UpdatedBy)
-    else
-      Qry.ParamByName('UPDATED_BY').AsString := GetCurrentAppUser;
+      if (Trim(ADie.UpdatedBy) <> '') and not SameText(Trim(ADie.UpdatedBy), 'OPERATOR') then
+        Qry.ParamByName('UPDATED_BY').AsString := Trim(ADie.UpdatedBy)
+      else
+        Qry.ParamByName('UPDATED_BY').AsString := GetCurrentAppUser;
 
-    Qry.ParamByName('ID').AsInteger := ADie.ID;
-    Qry.ParamByName('ORIG_VER').AsInteger := ADie.Version;
+      Qry.ParamByName('ID').AsInteger := ADie.ID;
+      Qry.ParamByName('ORIG_VER').AsInteger := ADie.Version;
 
-    Qry.ExecSQL;
-    Result := (Qry.RowsAffected > 0);
+      Qry.ExecSQL;
+      Result := (Qry.RowsAffected > 0);
 
-    if Result then
-    begin
+      if not Result then
+      begin
+        if Conn.InTransaction then
+          Conn.Rollback;
+        raise EDieVixConcurrencyException.Create(
+          'Concurrency conflict: The die record has been modified by another session. Please reload and review before saving.'
+        );
+      end;
+
       Audit := TDieAuditEntry.CreateEntry(ADie.ID, 'UPDATE', 'Die tooling specifications updated', ADie.UpdatedBy, ADie.SerialNo);
       Audit.OverrideReason := ADie.OverrideReason;
       AddAuditEntry(Audit);
+
+      if Conn.InTransaction then
+        Conn.Commit;
+    finally
+      Qry.Free;
     end;
-  finally
-    Qry.Free;
+  except
+    on E: Exception do
+    begin
+      if Conn.InTransaction then
+        Conn.Rollback;
+      var ConcurEx := TranslateDBException(E);
+      if ConcurEx <> nil then
+        raise ConcurEx
+      else
+        raise;
+    end;
   end;
 end;
 
@@ -1965,71 +2037,132 @@ end;
 
 function TDieRepository.ChangeStatus(
   const AID: Integer;
-  const ANewStatusCode, AReason, AUser: string
+  const ANewStatusCode, AReason, AUser: string;
+  const AExpectedVersion: Integer
 ): Boolean;
 var
   Qry: TFDQuery;
   OldStatus: string;
+  OldVersion: Integer;
   SerialNo: string;
   Audit: TDieAuditEntry;
+  Conn: TFDConnection;
   EffectiveUser: string;
 begin
   Result := False;
+  if SameText(Trim(ANewStatusCode), 'ARCHIVED') then
+    raise EDieVixValidationException.Create(
+      'Status "ARCHIVED" cannot be set via ChangeStatus. Use ArchiveDie instead.'
+    );
+
   EffectiveUser := Trim(AUser);
   if (EffectiveUser = '') or SameText(EffectiveUser, 'OPERATOR') then
     EffectiveUser := GetCurrentAppUser;
 
-  Qry := CreateQuery;
+  Conn := GetConn;
+  if not Conn.InTransaction then
+    Conn.StartTransaction;
   try
-    // 1. Get old status and serial number
-    SerialNo := '';
-    Qry.SQL.Text := 'SELECT STATUS_CODE, SERIAL_NO FROM DIE WHERE ID = :ID';
-    Qry.ParamByName('ID').AsInteger := AID;
-    Qry.Open;
-    if Qry.IsEmpty then
-      Exit;
-    OldStatus := Qry.FieldByName('STATUS_CODE').AsString;
-    SerialNo := Qry.FieldByName('SERIAL_NO').AsString;
-    Qry.Close;
+    Qry := CreateQuery;
+    try
+      // 1. Verify status code exists in DIE_STATUS
+      Qry.SQL.Text := 'SELECT COUNT(*) FROM DIE_STATUS WHERE CODE = :CODE';
+      Qry.ParamByName('CODE').AsString := Trim(ANewStatusCode);
+      Qry.Open;
+      if Qry.Fields[0].AsInteger = 0 then
+      begin
+        if Conn.InTransaction then Conn.Rollback;
+        raise EDieVixValidationException.Create(
+          Format('Status code "%s" does not exist in DIE_STATUS.', [Trim(ANewStatusCode)])
+        );
+      end;
+      Qry.Close;
 
-    // 2. Update status
-    Qry.SQL.Text :=
-      'UPDATE DIE SET ' +
-      '  STATUS_CODE = :NEW_STATUS, ' +
-      '  UPDATED_BY = :USER, ' +
-      '  UPDATED_AT = CURRENT_TIMESTAMP, ' +
-      '  VERSION = VERSION + 1 ' +
-      'WHERE ID = :ID';
-    Qry.ParamByName('NEW_STATUS').AsString := Trim(ANewStatusCode);
-    Qry.ParamByName('USER').AsString := EffectiveUser;
-    Qry.ParamByName('ID').AsInteger := AID;
-    Qry.ExecSQL;
-    Result := (Qry.RowsAffected > 0);
+      // 2. Get old status, version and serial number
+      SerialNo := '';
+      Qry.SQL.Text := 'SELECT STATUS_CODE, VERSION, SERIAL_NO FROM DIE WHERE ID = :ID';
+      Qry.ParamByName('ID').AsInteger := AID;
+      Qry.Open;
+      if Qry.IsEmpty then
+      begin
+        if Conn.InTransaction then Conn.Rollback;
+        Exit;
+      end;
+      OldStatus := Qry.FieldByName('STATUS_CODE').AsString;
+      OldVersion := Qry.FieldByName('VERSION').AsInteger;
+      SerialNo := Qry.FieldByName('SERIAL_NO').AsString;
+      Qry.Close;
 
-    if Result then
-    begin
+      if (AExpectedVersion > 0) and (OldVersion <> AExpectedVersion) then
+      begin
+        if Conn.InTransaction then Conn.Rollback;
+        raise EDieVixConcurrencyException.Create(
+          'Concurrency conflict: The die record has been modified by another session. Please reload and review before changing status.'
+        );
+      end;
+
+      // 3. Update status with optimistic concurrency check
+      Qry.SQL.Text :=
+        'UPDATE DIE SET ' +
+        '  STATUS_CODE = :NEW_STATUS, ' +
+        '  UPDATED_BY = :USER, ' +
+        '  UPDATED_AT = CURRENT_TIMESTAMP, ' +
+        '  VERSION = VERSION + 1 ' +
+        'WHERE ID = :ID AND VERSION = :EXP_VER';
+      Qry.ParamByName('NEW_STATUS').AsString := Trim(ANewStatusCode);
+      Qry.ParamByName('USER').AsString := EffectiveUser;
+      Qry.ParamByName('ID').AsInteger := AID;
+      Qry.ParamByName('EXP_VER').AsInteger := OldVersion;
+      Qry.ExecSQL;
+
+      if Qry.RowsAffected = 0 then
+      begin
+        if Conn.InTransaction then Conn.Rollback;
+        raise EDieVixConcurrencyException.Create(
+          'Concurrency conflict: The die record has been modified by another session. Please reload and review before changing status.'
+        );
+      end;
+
       Audit := TDieAuditEntry.CreateEntry(AID, 'STATUS_CHANGE', 'Status changed from ' + OldStatus + ' to ' + ANewStatusCode, EffectiveUser, SerialNo);
       Audit.FieldName := 'STATUS_CODE';
       Audit.OldValue := OldStatus;
       Audit.NewValue := ANewStatusCode;
       Audit.OverrideReason := AReason;
       AddAuditEntry(Audit);
+
+      if Conn.InTransaction then
+        Conn.Commit;
+      Result := True;
+    finally
+      Qry.Free;
     end;
-  finally
-    Qry.Free;
+  except
+    on E: Exception do
+    begin
+      if Conn.InTransaction then
+        Conn.Rollback;
+      var ConcurEx := TranslateDBException(E);
+      if ConcurEx <> nil then
+        raise ConcurEx
+      else
+        raise;
+    end;
   end;
 end;
 
 function TDieRepository.UpdateLocation(
   const AID: Integer;
-  const ARack, AShelf, ABin, ANotes, AUser: string
+  const ARack, AShelf, ABin, ANotes, AUser: string;
+  const AExpectedVersion: Integer
 ): Boolean;
 var
   Qry: TFDQuery;
   OldLoc: string;
+  OldVersion: Integer;
   NewLoc: string;
   SerialNo: string;
   Audit: TDieAuditEntry;
+  Conn: TFDConnection;
   EffectiveUser: string;
 begin
   Result := False;
@@ -2038,51 +2171,86 @@ begin
     EffectiveUser := GetCurrentAppUser;
 
   NewLoc := Format('Rack %s, Shelf %s, Bin %s', [Trim(ARack), Trim(AShelf), Trim(ABin)]);
-  Qry := CreateQuery;
+
+  Conn := GetConn;
+  if not Conn.InTransaction then
+    Conn.StartTransaction;
   try
-    SerialNo := '';
-    Qry.SQL.Text := 'SELECT STORAGE_LOCATION, SERIAL_NO FROM DIE WHERE ID = :ID';
-    Qry.ParamByName('ID').AsInteger := AID;
-    Qry.Open;
-    if not Qry.IsEmpty then
-    begin
+    Qry := CreateQuery;
+    try
+      SerialNo := '';
+      Qry.SQL.Text := 'SELECT STORAGE_LOCATION, VERSION, SERIAL_NO FROM DIE WHERE ID = :ID';
+      Qry.ParamByName('ID').AsInteger := AID;
+      Qry.Open;
+      if Qry.IsEmpty then
+      begin
+        if Conn.InTransaction then Conn.Rollback;
+        Exit;
+      end;
       OldLoc := Qry.FieldByName('STORAGE_LOCATION').AsString;
+      OldVersion := Qry.FieldByName('VERSION').AsInteger;
       SerialNo := Qry.FieldByName('SERIAL_NO').AsString;
-    end
-    else
-      OldLoc := '';
-    Qry.Close;
+      Qry.Close;
 
-    Qry.SQL.Text :=
-      'UPDATE DIE SET ' +
-      '  STORAGE_RACK = :RACK, ' +
-      '  STORAGE_SHELF = :SHELF, ' +
-      '  STORAGE_BIN = :BIN, ' +
-      '  STORAGE_LOCATION = :LOC, ' +
-      '  UPDATED_BY = :USER, ' +
-      '  UPDATED_AT = CURRENT_TIMESTAMP, ' +
-      '  VERSION = VERSION + 1 ' +
-      'WHERE ID = :ID';
-    Qry.ParamByName('RACK').AsString := Trim(ARack);
-    Qry.ParamByName('SHELF').AsString := Trim(AShelf);
-    Qry.ParamByName('BIN').AsString := Trim(ABin);
-    Qry.ParamByName('LOC').AsString := NewLoc;
-    Qry.ParamByName('USER').AsString := EffectiveUser;
-    Qry.ParamByName('ID').AsInteger := AID;
-    Qry.ExecSQL;
-    Result := (Qry.RowsAffected > 0);
+      if (AExpectedVersion > 0) and (OldVersion <> AExpectedVersion) then
+      begin
+        if Conn.InTransaction then Conn.Rollback;
+        raise EDieVixConcurrencyException.Create(
+          'Concurrency conflict: The die record has been modified by another session. Please reload and review before updating location.'
+        );
+      end;
 
-    if Result then
-    begin
+      Qry.SQL.Text :=
+        'UPDATE DIE SET ' +
+        '  STORAGE_RACK = :RACK, ' +
+        '  STORAGE_SHELF = :SHELF, ' +
+        '  STORAGE_BIN = :BIN, ' +
+        '  STORAGE_LOCATION = :LOC, ' +
+        '  UPDATED_BY = :USER, ' +
+        '  UPDATED_AT = CURRENT_TIMESTAMP, ' +
+        '  VERSION = VERSION + 1 ' +
+        'WHERE ID = :ID AND VERSION = :EXP_VER';
+      Qry.ParamByName('RACK').AsString := Trim(ARack);
+      Qry.ParamByName('SHELF').AsString := Trim(AShelf);
+      Qry.ParamByName('BIN').AsString := Trim(ABin);
+      Qry.ParamByName('LOC').AsString := NewLoc;
+      Qry.ParamByName('USER').AsString := EffectiveUser;
+      Qry.ParamByName('ID').AsInteger := AID;
+      Qry.ParamByName('EXP_VER').AsInteger := OldVersion;
+      Qry.ExecSQL;
+
+      if Qry.RowsAffected = 0 then
+      begin
+        if Conn.InTransaction then Conn.Rollback;
+        raise EDieVixConcurrencyException.Create(
+          'Concurrency conflict: The die record has been modified by another session. Please reload and review before updating location.'
+        );
+      end;
+
       Audit := TDieAuditEntry.CreateEntry(AID, 'LOCATION_CHANGE', 'Storage location moved to ' + NewLoc, EffectiveUser, SerialNo);
       Audit.FieldName := 'STORAGE_LOCATION';
       Audit.OldValue := OldLoc;
       Audit.NewValue := NewLoc;
       Audit.Details := ANotes;
       AddAuditEntry(Audit);
+
+      if Conn.InTransaction then
+        Conn.Commit;
+      Result := True;
+    finally
+      Qry.Free;
     end;
-  finally
-    Qry.Free;
+  except
+    on E: Exception do
+    begin
+      if Conn.InTransaction then
+        Conn.Rollback;
+      var ConcurEx := TranslateDBException(E);
+      if ConcurEx <> nil then
+        raise ConcurEx
+      else
+        raise;
+    end;
   end;
 end;
 
@@ -2292,9 +2460,9 @@ begin
   Result := TList<TSmartDieSearchResult>.Create;
   ATotalCount := 0;
 
-  TargetAroundUm := Round(AFilter.TargetAroundMm * 1000.0);
-  TargetAcrossUm := Round(AFilter.TargetAcrossMm * 1000.0);
-  TolUm := Round(AFilter.ToleranceMm * 1000.0);
+  TargetAroundUm := MmToUm(AFilter.TargetAroundMm);
+  TargetAcrossUm := MmToUm(AFilter.TargetAcrossMm);
+  TolUm := MmToUm(AFilter.ToleranceMm);
   if TolUm <= 0 then
     TolUm := 2000;
 
@@ -2321,7 +2489,7 @@ begin
       Sql := Sql + ' AND (TEETH IN (SELECT TEETH FROM MACHINE_CYLINDER WHERE MACHINE_ID = :MACH_ID)) ';
 
     if AFilter.ActiveOnly then
-      Sql := Sql + ' AND (STATUS_CODE IN (''ACTIVE'', ''AVAILABLE'', ''IN_USE'')) '
+      Sql := Sql + ' AND (STATUS_CODE IN (SELECT CODE FROM DIE_STATUS WHERE IS_USABLE = 1)) '
     else if Trim(AFilter.StatusCode) <> '' then
       Sql := Sql + ' AND (STATUS_CODE = :STATUS_CODE) '
     else if not AFilter.IncludeArchived then
@@ -2369,8 +2537,8 @@ begin
     while not Qry.Eof do
     begin
       Die := MapFromQuery(Qry);
-      DieAroundUm := Round(Die.AroundSizeMm * 1000.0);
-      DieAcrossUm := Round(Die.AcrossSizeMm * 1000.0);
+      DieAroundUm := MmToUm(Die.AroundSizeMm);
+      DieAcrossUm := MmToUm(Die.AcrossSizeMm);
       DiffAroundUm := DieAroundUm - TargetAroundUm;
       DiffAcrossUm := DieAcrossUm - TargetAcrossUm;
       AbsAroundUm := Abs(DiffAroundUm);
@@ -2485,20 +2653,20 @@ begin
   Result.CustomerRef := Qry.FieldByName('CUSTOMER_REF').AsString;
   Result.SupplierRef := Qry.FieldByName('SUPPLIER_REF').AsString;
   Result.InternalRef := Qry.FieldByName('INTERNAL_REF').AsString;
-  Result.AroundSizeMm := Qry.FieldByName('AROUND_SIZE_MM').AsFloat;
-  Result.AcrossSizeMm := Qry.FieldByName('ACROSS_SIZE_MM').AsFloat;
+  Result.AroundSizeMm := Qry.FieldByName('AROUND_SIZE_MM').AsCurrency;
+  Result.AcrossSizeMm := Qry.FieldByName('ACROSS_SIZE_MM').AsCurrency;
   Result.AroundUps := Qry.FieldByName('AROUND_UPS').AsInteger;
   Result.AcrossUps := Qry.FieldByName('ACROSS_UPS').AsInteger;
   Result.TotalUps := Qry.FieldByName('TOTAL_UPS').AsInteger;
-  Result.AroundGapMm := Qry.FieldByName('AROUND_GAP_MM').AsFloat;
-  Result.AcrossGapMm := Qry.FieldByName('ACROSS_GAP_MM').AsFloat;
-  Result.CornerRadiusMm := Qry.FieldByName('CORNER_RADIUS_MM').AsFloat;
+  Result.AroundGapMm := Qry.FieldByName('AROUND_GAP_MM').AsCurrency;
+  Result.AcrossGapMm := Qry.FieldByName('ACROSS_GAP_MM').AsCurrency;
+  Result.CornerRadiusMm := Qry.FieldByName('CORNER_RADIUS_MM').AsCurrency;
   Result.Shape := Qry.FieldByName('SHAPE').AsString;
-  Result.PlateWidthMm := Qry.FieldByName('PLATE_WIDTH_MM').AsFloat;
-  Result.PlateLengthMm := Qry.FieldByName('PLATE_LENGTH_MM').AsFloat;
-  Result.MaxFeedStrokeMm := Qry.FieldByName('MAX_FEED_STROKE_MM').AsFloat;
-  Result.TotalCutAroundMm := Qry.FieldByName('TOTAL_CUT_AROUND_MM').AsFloat;
-  Result.TotalCutAcrossMm := Qry.FieldByName('TOTAL_CUT_ACROSS_MM').AsFloat;
+  Result.PlateWidthMm := Qry.FieldByName('PLATE_WIDTH_MM').AsCurrency;
+  Result.PlateLengthMm := Qry.FieldByName('PLATE_LENGTH_MM').AsCurrency;
+  Result.MaxFeedStrokeMm := Qry.FieldByName('MAX_FEED_STROKE_MM').AsCurrency;
+  Result.TotalCutAroundMm := Qry.FieldByName('TOTAL_CUT_AROUND_MM').AsCurrency;
+  Result.TotalCutAcrossMm := Qry.FieldByName('TOTAL_CUT_ACROSS_MM').AsCurrency;
   Result.CanRotate := (Qry.FieldByName('CAN_ROTATE').AsInteger = 1);
   Result.RotationSupport := Qry.FieldByName('ROTATION_SUPPORT').AsString;
   Result.StorageLocation := Qry.FieldByName('STORAGE_LOCATION').AsString;
@@ -2629,7 +2797,7 @@ begin
     end;
 
     if AFilter.ActiveOnly then
-      Sql := Sql + ' AND (STATUS_CODE IN (''ACTIVE'', ''AVAILABLE'', ''IN_USE'')) '
+      Sql := Sql + ' AND (STATUS_CODE IN (SELECT CODE FROM DIE_STATUS WHERE IS_USABLE = 1)) '
     else if Trim(AFilter.StatusCode) <> '' then
       Sql := Sql + ' AND (STATUS_CODE = :STATUS) '
     else if not AFilter.IncludeArchived then
@@ -2696,7 +2864,7 @@ begin
     if Trim(ACategory) <> '' then
       Sql := Sql + ' AND (CATEGORY = :CAT) ';
     if AActiveOnly then
-      Sql := Sql + ' AND (STATUS_CODE IN (''ACTIVE'', ''AVAILABLE'', ''IN_USE'')) '
+      Sql := Sql + ' AND (STATUS_CODE IN (SELECT CODE FROM DIE_STATUS WHERE IS_USABLE = 1)) '
     else
       Sql := Sql + ' AND (STATUS_CODE <> ''ARCHIVED'') ';
 
@@ -2789,27 +2957,27 @@ begin
     Qry.ParamByName('SUPPLIER_REF').AsString := Trim(ADie.SupplierRef);
     Qry.ParamByName('INTERNAL_REF').AsString := Trim(ADie.InternalRef);
 
-    Qry.ParamByName('AROUND_SIZE_MM').AsFloat := ADie.AroundSizeMm;
-    Qry.ParamByName('ACROSS_SIZE_MM').AsFloat := ADie.AcrossSizeMm;
+    Qry.ParamByName('AROUND_SIZE_MM').AsCurrency := ADie.AroundSizeMm;
+    Qry.ParamByName('ACROSS_SIZE_MM').AsCurrency := ADie.AcrossSizeMm;
     Qry.ParamByName('AROUND_UPS').AsInteger := ADie.AroundUps;
     Qry.ParamByName('ACROSS_UPS').AsInteger := ADie.AcrossUps;
-    Qry.ParamByName('AROUND_GAP_MM').AsFloat := ADie.AroundGapMm;
-    Qry.ParamByName('ACROSS_GAP_MM').AsFloat := ADie.AcrossGapMm;
-    Qry.ParamByName('CORNER_RADIUS_MM').AsFloat := ADie.CornerRadiusMm;
+    Qry.ParamByName('AROUND_GAP_MM').AsCurrency := ADie.AroundGapMm;
+    Qry.ParamByName('ACROSS_GAP_MM').AsCurrency := ADie.AcrossGapMm;
+    Qry.ParamByName('CORNER_RADIUS_MM').AsCurrency := ADie.CornerRadiusMm;
     Qry.ParamByName('SHAPE').AsString := Trim(ADie.Shape);
 
     if ADie.PlateWidthMm > 0 then
-      Qry.ParamByName('PLATE_WIDTH_MM').AsFloat := ADie.PlateWidthMm
+      Qry.ParamByName('PLATE_WIDTH_MM').AsCurrency := ADie.PlateWidthMm
     else
       Qry.ParamByName('PLATE_WIDTH_MM').Clear;
 
     if ADie.PlateLengthMm > 0 then
-      Qry.ParamByName('PLATE_LENGTH_MM').AsFloat := ADie.PlateLengthMm
+      Qry.ParamByName('PLATE_LENGTH_MM').AsCurrency := ADie.PlateLengthMm
     else
       Qry.ParamByName('PLATE_LENGTH_MM').Clear;
 
     if ADie.MaxFeedStrokeMm > 0 then
-      Qry.ParamByName('MAX_FEED_STROKE_MM').AsFloat := ADie.MaxFeedStrokeMm
+      Qry.ParamByName('MAX_FEED_STROKE_MM').AsCurrency := ADie.MaxFeedStrokeMm
     else
       Qry.ParamByName('MAX_FEED_STROKE_MM').Clear;
 
@@ -2925,27 +3093,27 @@ begin
     Qry.ParamByName('SUPPLIER_REF').AsString := Trim(ADie.SupplierRef);
     Qry.ParamByName('INTERNAL_REF').AsString := Trim(ADie.InternalRef);
 
-    Qry.ParamByName('AROUND_SIZE_MM').AsFloat := ADie.AroundSizeMm;
-    Qry.ParamByName('ACROSS_SIZE_MM').AsFloat := ADie.AcrossSizeMm;
+    Qry.ParamByName('AROUND_SIZE_MM').AsCurrency := ADie.AroundSizeMm;
+    Qry.ParamByName('ACROSS_SIZE_MM').AsCurrency := ADie.AcrossSizeMm;
     Qry.ParamByName('AROUND_UPS').AsInteger := ADie.AroundUps;
     Qry.ParamByName('ACROSS_UPS').AsInteger := ADie.AcrossUps;
-    Qry.ParamByName('AROUND_GAP_MM').AsFloat := ADie.AroundGapMm;
-    Qry.ParamByName('ACROSS_GAP_MM').AsFloat := ADie.AcrossGapMm;
-    Qry.ParamByName('CORNER_RADIUS_MM').AsFloat := ADie.CornerRadiusMm;
+    Qry.ParamByName('AROUND_GAP_MM').AsCurrency := ADie.AroundGapMm;
+    Qry.ParamByName('ACROSS_GAP_MM').AsCurrency := ADie.AcrossGapMm;
+    Qry.ParamByName('CORNER_RADIUS_MM').AsCurrency := ADie.CornerRadiusMm;
     Qry.ParamByName('SHAPE').AsString := Trim(ADie.Shape);
 
     if ADie.PlateWidthMm > 0 then
-      Qry.ParamByName('PLATE_WIDTH_MM').AsFloat := ADie.PlateWidthMm
+      Qry.ParamByName('PLATE_WIDTH_MM').AsCurrency := ADie.PlateWidthMm
     else
       Qry.ParamByName('PLATE_WIDTH_MM').Clear;
 
     if ADie.PlateLengthMm > 0 then
-      Qry.ParamByName('PLATE_LENGTH_MM').AsFloat := ADie.PlateLengthMm
+      Qry.ParamByName('PLATE_LENGTH_MM').AsCurrency := ADie.PlateLengthMm
     else
       Qry.ParamByName('PLATE_LENGTH_MM').Clear;
 
     if ADie.MaxFeedStrokeMm > 0 then
-      Qry.ParamByName('MAX_FEED_STROKE_MM').AsFloat := ADie.MaxFeedStrokeMm
+      Qry.ParamByName('MAX_FEED_STROKE_MM').AsCurrency := ADie.MaxFeedStrokeMm
     else
       Qry.ParamByName('MAX_FEED_STROKE_MM').Clear;
 

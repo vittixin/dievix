@@ -715,7 +715,7 @@ begin
   Reason := InputBox('Status Change Reason', 'Enter reason for status change:', '');
 
   try
-    FDieService.ChangeDieStatus(SelectedID, UpperCase(Trim(NewStatus)), Reason);
+    FDieService.ChangeDieStatus(SelectedID, UpperCase(Trim(NewStatus)), Reason, '', SelectedDie.Version);
     if FIsSmartSearch then
       PerformSmartSearch
     else
@@ -746,7 +746,7 @@ begin
   Notes := InputBox('Relocation Notes', 'Enter relocation notes / movement reason:', '');
 
   try
-    FDieService.UpdateDieLocation(SelectedID, Rack, Shelf, Bin, Notes);
+    FDieService.UpdateDieLocation(SelectedID, Rack, Shelf, Bin, Notes, '', SelectedDie.Version);
     if FIsSmartSearch then
       PerformSmartSearch
     else
@@ -793,7 +793,7 @@ begin
   end;
 
   try
-    FDieService.ArchiveDie(SelectedID, Trim(Reason));
+    FDieService.ArchiveDie(SelectedID, Trim(Reason), '', SelectedDie.Version);
     ShowMessage(Format('Die tooling "%s" has been successfully archived.', [SelectedDie.SerialNo]));
     if FIsSmartSearch then
       PerformSmartSearch
@@ -840,7 +840,7 @@ begin
     Reason := 'Reactivated for production';
 
   try
-    FDieService.RestoreDie(SelectedID, Trim(Reason));
+    FDieService.RestoreDie(SelectedID, Trim(Reason), '', SelectedDie.Version);
     ShowMessage(Format('Die tooling "%s" has been successfully restored to ACTIVE status.', [SelectedDie.SerialNo]));
     if FIsSmartSearch then
       PerformSmartSearch

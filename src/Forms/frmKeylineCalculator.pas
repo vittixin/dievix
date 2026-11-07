@@ -787,12 +787,12 @@ begin
   end;
 
   RepeatUm := Int64(Rec.Teeth) * Int64(Rec.PitchUm);
-  LabelAroundUm := Round(FCurrentInput.LabelAroundMm * 1000.0);
-  LabelAcrossUm := Round(FCurrentInput.LabelAcrossMm * 1000.0);
-  AcrossGapUm := Round(FCurrentInput.AcrossGapMm * 1000.0);
-  LeftMarginUm := Round(FCurrentInput.LeftMarginMm * 1000.0);
-  RightMarginUm := Round(FCurrentInput.RightMarginMm * 1000.0);
-  CornerRadUm := Round(FCurrentInput.CornerRadiusMm * 1000.0);
+  LabelAroundUm := MmToUm(FCurrentInput.LabelAroundMm);
+  LabelAcrossUm := MmToUm(FCurrentInput.LabelAcrossMm);
+  AcrossGapUm := MmToUm(FCurrentInput.AcrossGapMm);
+  LeftMarginUm := MmToUm(FCurrentInput.LeftMarginMm);
+  RightMarginUm := MmToUm(FCurrentInput.RightMarginMm);
+  CornerRadUm := MmToUm(FCurrentInput.CornerRadiusMm);
   AcrossUps := FCurrentInput.AcrossUps;
   AroundUps := Rec.AroundUps;
 

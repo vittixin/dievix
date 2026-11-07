@@ -94,13 +94,15 @@ type
     function ChangeFlatbedDieStatus(
       const AID: Integer;
       const ANewStatusCode, AReason: string;
-      const AOperator: string = ''
+      const AOperator: string = '';
+      const AExpectedVersion: Integer = 0
     ): Boolean;
 
     function UpdateFlatbedDieLocation(
       const AID: Integer;
       const ARack, AShelf, ABin, ANotes: string;
-      const AOperator: string = ''
+      const AOperator: string = '';
+      const AExpectedVersion: Integer = 0
     ): Boolean;
 
     { Duplicate Detection }
@@ -394,18 +396,28 @@ end;
 function TFlatbedDieService.ChangeFlatbedDieStatus(
   const AID: Integer;
   const ANewStatusCode, AReason: string;
-  const AOperator: string
+  const AOperator: string;
+  const AExpectedVersion: Integer
 ): Boolean;
 begin
+  if AExpectedVersion <= 0 then
+    raise EDieVixConcurrencyException.Create(
+      'Concurrency conflict: Record version is required for flatbed status changes from UI (AExpectedVersion must be > 0).'
+    );
   Result := FFlatbedRepo.ChangeStatus(AID, ANewStatusCode, AReason, AOperator);
 end;
 
 function TFlatbedDieService.UpdateFlatbedDieLocation(
   const AID: Integer;
   const ARack, AShelf, ABin, ANotes: string;
-  const AOperator: string
+  const AOperator: string;
+  const AExpectedVersion: Integer
 ): Boolean;
 begin
+  if AExpectedVersion <= 0 then
+    raise EDieVixConcurrencyException.Create(
+      'Concurrency conflict: Record version is required for flatbed location updates from UI (AExpectedVersion must be > 0).'
+    );
   Result := FFlatbedRepo.UpdateLocation(AID, ARack, AShelf, ABin, ANotes, AOperator);
 end;
 

@@ -863,6 +863,156 @@ LEFT JOIN DIE_STATUS S ON S.CODE = F.STATUS_CODE;
 
 /* --- End Migration: V009__flatbed_die_inventory.sql --- */
 
+/* --- Begin Migration: V010__schema_version_checksum.sql --- */
+-- =============================================================================
+-- DieVix - Database Migration V010
+-- Add CHECKSUM column to SCHEMA_VERSION for migration integrity verification
+-- =============================================================================
+
+ALTER TABLE SCHEMA_VERSION ADD CHECKSUM VARCHAR(64);
+
+/* --- End Migration: V010__schema_version_checksum.sql --- */
+
+/* --- Begin Migration: V011__die_gap_status_and_precision.sql --- */
+/* =============================================================================
+   DieVix Database Migration V011
+   - Add AROUND_GAP_UM (BIGINT) and GAP_STATUS (VARCHAR(30)) to DIE table
+   - Alter millimetre columns on DIE to NUMERIC(18,4) for consistent precision
+   - Recreate COMPUTED_AROUND_GAP_MM derived from AROUND_GAP_UM
+   - Backfill AROUND_GAP_UM and GAP_STATUS replicating engine pool-based rules
+   - Recreate V_DIE_CATALOG reading AROUND_GAP_UM and GAP_STATUS directly
+============================================================================= */
+
+-- Enable FireDAC script autocommit so column metadata changes are committed before backfill DML
+SET AUTOCOMMIT ON;
+
+-- 1. Drop dependent catalog view
+DROP VIEW V_DIE_CATALOG;
+
+-- 2. Drop computed around gap column before altering column types
+ALTER TABLE DIE DROP COMPUTED_AROUND_GAP_MM;
+
+-- 3. Add integer micrometre gap and gap status columns
+ALTER TABLE DIE ADD AROUND_GAP_UM BIGINT;
+ALTER TABLE DIE ADD GAP_STATUS VARCHAR(30);
+
+-- 4. Alter precision of millimetre columns to NUMERIC(18,4)
+ALTER TABLE DIE ALTER COLUMN AROUND_SIZE_MM TYPE NUMERIC(18,4);
+ALTER TABLE DIE ALTER COLUMN ACROSS_SIZE_MM TYPE NUMERIC(18,4);
+ALTER TABLE DIE ALTER COLUMN ACROSS_GAP_MM TYPE NUMERIC(18,4);
+ALTER TABLE DIE ALTER COLUMN CORNER_RADIUS_MM TYPE NUMERIC(18,4);
+
+-- 5. Backfill existing DIE records with engine-accurate pool calculations
+UPDATE DIE D
+SET
+    AROUND_GAP_UM = (
+        (CAST(D.TEETH AS BIGINT) * CAST(COALESCE(D.PITCH_UM, 3175) AS BIGINT) -
+         CAST(D.AROUND_UPS AS BIGINT) * CAST(ROUND(D.AROUND_SIZE_MM * 1000.0000) AS BIGINT)) / NULLIF(D.AROUND_UPS, 0)
+    ),
+    GAP_STATUS = CASE
+        WHEN D.TEETH <= 0 OR D.AROUND_UPS <= 0 OR D.AROUND_SIZE_MM <= 0 THEN 'REJECTED_MECHANICAL'
+        WHEN (CAST(D.TEETH AS BIGINT) * CAST(COALESCE(D.PITCH_UM, 3175) AS BIGINT) -
+              CAST(D.AROUND_UPS AS BIGINT) * CAST(ROUND(D.AROUND_SIZE_MM * 1000.0000) AS BIGINT)) < 0 THEN 'REJECTED_MECHANICAL'
+        WHEN (COALESCE((SELECT CAST(SETTING_VALUE AS BIGINT) FROM APP_SETTING WHERE SETTING_KEY = 'HARD_BLOCK_GAP_UM'), 0) > 0)
+             AND ((CAST(D.TEETH AS BIGINT) * CAST(COALESCE(D.PITCH_UM, 3175) AS BIGINT) -
+                   CAST(D.AROUND_UPS AS BIGINT) * CAST(ROUND(D.AROUND_SIZE_MM * 1000.0000) AS BIGINT)) <
+                  (CAST(D.AROUND_UPS AS BIGINT) * (SELECT CAST(SETTING_VALUE AS BIGINT) FROM APP_SETTING WHERE SETTING_KEY = 'HARD_BLOCK_GAP_UM')))
+             THEN 'REJECTED_MECHANICAL'
+        WHEN (CAST(D.TEETH AS BIGINT) * CAST(COALESCE(D.PITCH_UM, 3175) AS BIGINT) -
+              CAST(D.AROUND_UPS AS BIGINT) * CAST(ROUND(D.AROUND_SIZE_MM * 1000.0000) AS BIGINT)) <
+             (CAST(D.AROUND_UPS AS BIGINT) * COALESCE((SELECT CAST(SETTING_VALUE AS BIGINT) FROM APP_SETTING WHERE SETTING_KEY = 'MIN_AROUND_GAP_UM'), 3000))
+             THEN 'WARNING_SUB3MM'
+        ELSE 'APPROVED'
+    END;
+
+-- 6. Recreate COMPUTED_AROUND_GAP_MM linked to AROUND_GAP_UM with exact 4-decimal scale and fallback
+ALTER TABLE DIE ADD COMPUTED_AROUND_GAP_MM COMPUTED BY (
+    CAST(
+        COALESCE(
+            AROUND_GAP_UM,
+            (CAST(TEETH AS BIGINT) * CAST(COALESCE(PITCH_UM, 3175) AS BIGINT) -
+             CAST(AROUND_UPS AS BIGINT) * CAST(ROUND(AROUND_SIZE_MM * 1000.0000) AS BIGINT)) / NULLIF(AROUND_UPS, 0)
+        ) / 1000.0000 AS NUMERIC(18,4)
+    )
+);
+
+-- 7. Recreate V_DIE_CATALOG reading AROUND_GAP_UM and GAP_STATUS directly with engine-consistent fallback
+CREATE VIEW V_DIE_CATALOG AS
+SELECT
+    D.ID,
+    D.SERIAL_NO,
+    D.CUSTOMER_ID,
+    C.NAME AS CUSTOMER_NAME,
+    D.MEDIA_ID,
+    M.NAME AS MEDIA_NAME,
+    D.TEETH,
+    D.PITCH_UM,
+    D.COMPUTED_REPEAT_MM AS REPEAT_MM,
+    CAST(D.COMPUTED_REPEAT_MM / 25.400 AS NUMERIC(18,3)) AS REPEAT_INCH,
+    D.AROUND_SIZE_MM,
+    D.ACROSS_SIZE_MM,
+    D.AROUND_UPS,
+    D.ACROSS_UPS,
+    D.COMPUTED_AROUND_GAP_MM AS AROUND_GAP_MM,
+    COALESCE(
+        D.AROUND_GAP_UM,
+        (CAST(D.TEETH AS BIGINT) * CAST(COALESCE(D.PITCH_UM, 3175) AS BIGINT) -
+         CAST(D.AROUND_UPS AS BIGINT) * CAST(ROUND(D.AROUND_SIZE_MM * 1000.0000) AS BIGINT)) / NULLIF(D.AROUND_UPS, 0)
+    ) AS AROUND_GAP_UM,
+    D.ACROSS_GAP_MM,
+    D.CORNER_RADIUS_MM,
+    D.SHAPE,
+    D.CUT_TYPE,
+    D.STORAGE_LOCATION,
+    D.STORAGE_RACK,
+    D.STORAGE_SHELF,
+    D.STORAGE_BIN,
+    D.STATUS_CODE,
+    S.DESCRIPTION AS STATUS_NAME,
+    S.BADGE_COLOR,
+    D.OVERRIDE_REASON,
+    COALESCE(
+        D.GAP_STATUS,
+        CASE
+            WHEN D.TEETH <= 0 OR D.AROUND_UPS <= 0 OR D.AROUND_SIZE_MM <= 0 THEN 'REJECTED_MECHANICAL'
+            WHEN (CAST(D.TEETH AS BIGINT) * CAST(COALESCE(D.PITCH_UM, 3175) AS BIGINT) -
+                  CAST(D.AROUND_UPS AS BIGINT) * CAST(ROUND(D.AROUND_SIZE_MM * 1000.0000) AS BIGINT)) < 0 THEN 'REJECTED_MECHANICAL'
+            WHEN (COALESCE((SELECT CAST(SETTING_VALUE AS BIGINT) FROM APP_SETTING WHERE SETTING_KEY = 'HARD_BLOCK_GAP_UM'), 0) > 0)
+                 AND ((CAST(D.TEETH AS BIGINT) * CAST(COALESCE(D.PITCH_UM, 3175) AS BIGINT) -
+                       CAST(D.AROUND_UPS AS BIGINT) * CAST(ROUND(D.AROUND_SIZE_MM * 1000.0000) AS BIGINT)) <
+                      (CAST(D.AROUND_UPS AS BIGINT) * (SELECT CAST(SETTING_VALUE AS BIGINT) FROM APP_SETTING WHERE SETTING_KEY = 'HARD_BLOCK_GAP_UM')))
+                 THEN 'REJECTED_MECHANICAL'
+            WHEN (CAST(D.TEETH AS BIGINT) * CAST(COALESCE(D.PITCH_UM, 3175) AS BIGINT) -
+                  CAST(D.AROUND_UPS AS BIGINT) * CAST(ROUND(D.AROUND_SIZE_MM * 1000.0000) AS BIGINT)) <
+                 (CAST(D.AROUND_UPS AS BIGINT) * COALESCE((SELECT CAST(SETTING_VALUE AS BIGINT) FROM APP_SETTING WHERE SETTING_KEY = 'MIN_AROUND_GAP_UM'), 3000))
+                 THEN 'WARNING_SUB3MM'
+            ELSE 'APPROVED'
+        END
+    ) AS GAP_POLICY_STATUS,
+    D.PURCHASE_DATE,
+    D.RECEIVED_DATE,
+    D.DIE_MAKER,
+    D.SUPPLIER_REF,
+    D.TOTAL_RUN_METRES,
+    D.DESCRIPTION,
+    D.INTERNAL_REF,
+    D.CUSTOMER_REF,
+    D.NOTES,
+    D.VERSION,
+    D.CREATED_BY,
+    D.CREATED_AT,
+    D.UPDATED_BY,
+    D.UPDATED_AT
+FROM DIE D
+LEFT JOIN CUSTOMER C ON D.CUSTOMER_ID = C.ID
+LEFT JOIN MEDIA M ON D.MEDIA_ID = M.ID
+LEFT JOIN DIE_STATUS S ON D.STATUS_CODE = S.CODE;
+
+-- Restore autocommit state to transactional
+SET AUTOCOMMIT OFF;
+
+/* --- End Migration: V011__die_gap_status_and_precision.sql --- */
+
 /* =============================================================================
    Consolidated Schema Version Registration
    Pre-populates SCHEMA_VERSION so migration runner recognizes all applied scripts.
@@ -876,4 +1026,6 @@ UPDATE OR INSERT INTO SCHEMA_VERSION (VERSION_NUM, SCRIPT_NAME) VALUES (6, 'V006
 UPDATE OR INSERT INTO SCHEMA_VERSION (VERSION_NUM, SCRIPT_NAME) VALUES (7, 'V007__reconcile_gap_policy_and_audit_fk.sql') MATCHING (VERSION_NUM);
 UPDATE OR INSERT INTO SCHEMA_VERSION (VERSION_NUM, SCRIPT_NAME) VALUES (8, 'V008__audit_serial_and_pool_gap_policy.sql') MATCHING (VERSION_NUM);
 UPDATE OR INSERT INTO SCHEMA_VERSION (VERSION_NUM, SCRIPT_NAME) VALUES (9, 'V009__flatbed_die_inventory.sql') MATCHING (VERSION_NUM);
+UPDATE OR INSERT INTO SCHEMA_VERSION (VERSION_NUM, SCRIPT_NAME) VALUES (10, 'V010__schema_version_checksum.sql') MATCHING (VERSION_NUM);
+UPDATE OR INSERT INTO SCHEMA_VERSION (VERSION_NUM, SCRIPT_NAME) VALUES (11, 'V011__die_gap_status_and_precision.sql') MATCHING (VERSION_NUM);
 

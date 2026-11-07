@@ -99,13 +99,15 @@ type
     function ChangeDieStatus(
       const AID: Integer;
       const ANewStatusCode, AReason: string;
-      const AOperator: string = ''
+      const AOperator: string = '';
+      const AExpectedVersion: Integer = 0
     ): Boolean;
 
     function UpdateDieLocation(
       const AID: Integer;
       const ARack, AShelf, ABin, ANotes: string;
-      const AOperator: string = ''
+      const AOperator: string = '';
+      const AExpectedVersion: Integer = 0
     ): Boolean;
 
     { Duplicate and Similar Die Detection }
@@ -316,6 +318,17 @@ begin
       [GapRes.AroundGapMm, UmToMm(GetMinAroundGapUm)]
     );
 
+  ADie.AroundGapMm := GapRes.AroundGapMm;
+  ADie.AroundGapUm := GapRes.AroundGapUm;
+  case GapRes.Status of
+    gsOptimal, gsStandardApproved: ADie.GapStatus := 'APPROVED';
+    gsSubStandardWarning: ADie.GapStatus := 'WARNING_SUB3MM';
+    gsMechanicallyRejected: ADie.GapStatus := 'REJECTED_MECHANICAL';
+  else
+    ADie.GapStatus := 'APPROVED';
+  end;
+  ADie.GapPolicyStatus := ADie.GapStatus;
+
   // 3. Field validation
   if not ValidateDie(ADie, Errors) then
     raise EDieVixValidationException.Create('Validation failed: ' + string.Join('; ', Errors));
@@ -458,28 +471,42 @@ end;
 
 function TDieService.ChangeDieStatus(
   const AID: Integer;
-  const ANewStatusCode, AReason, AOperator: string
+  const ANewStatusCode, AReason: string;
+  const AOperator: string;
+  const AExpectedVersion: Integer
 ): Boolean;
 var
   Op: string;
 begin
+  if AExpectedVersion <= 0 then
+    raise EDieVixConcurrencyException.Create(
+      'Concurrency conflict: Record version is required for status changes from UI (AExpectedVersion must be > 0).'
+    );
+
   Op := Trim(AOperator);
   if (Op = '') or SameText(Op, 'OPERATOR') then
     Op := GetCurrentAppUser;
-  Result := FDieRepo.ChangeStatus(AID, ANewStatusCode, AReason, Op);
+  Result := FDieRepo.ChangeStatus(AID, ANewStatusCode, AReason, Op, AExpectedVersion);
 end;
 
 function TDieService.UpdateDieLocation(
   const AID: Integer;
-  const ARack, AShelf, ABin, ANotes, AOperator: string
+  const ARack, AShelf, ABin, ANotes: string;
+  const AOperator: string;
+  const AExpectedVersion: Integer
 ): Boolean;
 var
   Op: string;
 begin
+  if AExpectedVersion <= 0 then
+    raise EDieVixConcurrencyException.Create(
+      'Concurrency conflict: Record version is required for location updates from UI (AExpectedVersion must be > 0).'
+    );
+
   Op := Trim(AOperator);
   if (Op = '') or SameText(Op, 'OPERATOR') then
     Op := GetCurrentAppUser;
-  Result := FDieRepo.UpdateLocation(AID, ARack, AShelf, ABin, ANotes, Op);
+  Result := FDieRepo.UpdateLocation(AID, ARack, AShelf, ABin, ANotes, Op, AExpectedVersion);
 end;
 
 function TDieService.FindSimilarDies(

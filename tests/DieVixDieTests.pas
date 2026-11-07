@@ -589,7 +589,8 @@ var
   OK: Boolean;
   Die: TDie;
 begin
-  OK := FDieService.UpdateDieLocation(FTestDieID, 'RACK-B', 'SHELF-04', 'BIN-99', 'Relocated for routine maintenance', 'STOREKEEPER');
+  Die := FDieService.GetDieByID(FTestDieID);
+  OK := FDieService.UpdateDieLocation(FTestDieID, 'RACK-B', 'SHELF-04', 'BIN-99', 'Relocated for routine maintenance', 'STOREKEEPER', Die.Version);
   Assert.IsTrue(OK, 'UpdateDieLocation must return True');
 
   Die := FDieService.GetDieByID(FTestDieID);
@@ -604,14 +605,15 @@ var
   OK: Boolean;
   Die: TDie;
 begin
-  OK := FDieService.ChangeDieStatus(FTestDieID, 'REPAIR', 'Re-sharpening cylinder blades', 'MAINT_ENG');
+  Die := FDieService.GetDieByID(FTestDieID);
+  OK := FDieService.ChangeDieStatus(FTestDieID, 'REPAIR', 'Re-sharpening cylinder blades', 'MAINT_ENG', Die.Version);
   Assert.IsTrue(OK, 'ChangeDieStatus must succeed');
 
   Die := FDieService.GetDieByID(FTestDieID);
   Assert.AreEqual('REPAIR', Die.StatusCode, 'StatusCode must be updated to REPAIR');
 
   // Change back to ACTIVE
-  FDieService.ChangeDieStatus(FTestDieID, 'ACTIVE', 'Re-sharpening verified and returned to service', 'MAINT_ENG');
+  FDieService.ChangeDieStatus(FTestDieID, 'ACTIVE', 'Re-sharpening verified and returned to service', 'MAINT_ENG', Die.Version);
   Die := FDieService.GetDieByID(FTestDieID);
   Assert.AreEqual('ACTIVE', Die.StatusCode, 'StatusCode must be returned to ACTIVE');
 end;
@@ -1664,7 +1666,8 @@ begin
     end;
 
     // 4. Change status with default actor parameter and verify audit
-    Assert.IsTrue(FDieService.ChangeDieStatus(DieID, 'REPAIR', 'Testing default actor propagation'));
+    Die := FDieService.GetDieByID(DieID);
+    Assert.IsTrue(FDieService.ChangeDieStatus(DieID, 'REPAIR', 'Testing default actor propagation', '', Die.Version));
     AuditList := FDieService.GetDieAuditHistory(DieID);
     try
       Assert.AreEqual(ExpectedUser, AuditList[AuditList.Count - 1].ChangedBy, 'STATUS_CHANGE audit record ChangedBy must match Windows user');
@@ -1721,8 +1724,10 @@ begin
   Assert.IsTrue(DieID > 0, 'Die tooling record must be saved');
 
   // 2. Perform actions to generate multiple diverse audit rows
-  FDieService.ChangeDieStatus(DieID, 'REPAIR', 'Routine inspection');
-  FDieService.UpdateDieLocation(DieID, 'RACK-B', 'SHELF-02', 'BIN-05', 'Moved for staging');
+  Die := FDieService.GetDieByID(DieID);
+  FDieService.ChangeDieStatus(DieID, 'REPAIR', 'Routine inspection', '', Die.Version);
+  Die := FDieService.GetDieByID(DieID);
+  FDieService.UpdateDieLocation(DieID, 'RACK-B', 'SHELF-02', 'BIN-05', 'Moved for staging', '', Die.Version);
 
   // 3. Add an audit row with near-500-character DETAILS (490 chars)
   LongDetails := StringOfChar('X', 490);

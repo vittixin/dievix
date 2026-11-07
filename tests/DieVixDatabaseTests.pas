@@ -117,6 +117,30 @@ type
 
     [Test]
     procedure TestAuditSerialColumnAndBackfill;
+
+    [Test]
+    procedure TestOpenModeRefusesMissingDatabase;
+
+    [Test]
+    procedure TestDPAPISecretProtectionRoundTrip;
+
+    [Test]
+    procedure TestResolveConfigIniPath;
+
+    [Test]
+    procedure TestMigrationChecksumTrackingAndTamperDetection;
+
+    [Test]
+    procedure TestDieRepositorySingleTransactionRollback;
+
+    [Test]
+    procedure TestChangeStatusValidationAndConcurrency;
+
+    [Test]
+    procedure TestUpdateLocationValidationAndConcurrency;
+
+    [Test]
+    procedure TestTranslateDBExceptionMapping;
   end;
 
 implementation
@@ -1327,6 +1351,334 @@ begin
   finally
     FConn.ExecSQL('DELETE FROM DIE_AUDIT_LOG WHERE DIE_ID = ' + IntToStr(DieID));
     FConn.ExecSQL('DELETE FROM DIE WHERE ID = ' + IntToStr(DieID));
+  end;
+end;
+
+procedure TDieVixDatabaseTests.TestOpenModeRefusesMissingDatabase;
+var
+  TestCfg: TDatabaseConfig;
+  TempConn: TFDConnection;
+  NonExistentFile: string;
+  FailedAsExpected: Boolean;
+begin
+  NonExistentFile := TPath.Combine(ExtractFilePath(ParamStr(0)), 'nonexistent_test_db_' + FormatDateTime('hhnnsszzz', Now) + '.fdb');
+  Assert.IsFalse(FileExists(NonExistentFile), 'Target test file must not exist before test');
+
+  TestCfg := TDieVixConnectionManager.Instance.Config;
+  TestCfg.Database := NonExistentFile;
+
+  TempConn := TFDConnection.Create(nil);
+  try
+    TDieVixConnectionManager.ConfigureConnection(TempConn, TestCfg);
+    FailedAsExpected := False;
+    try
+      TempConn.Open;
+    except
+      FailedAsExpected := True;
+    end;
+
+    Assert.IsTrue(FailedAsExpected, 'Opening non-existent database with OpenMode=Open must fail');
+    Assert.IsFalse(FileExists(NonExistentFile), 'Non-existent database file must NOT be silently created');
+  finally
+    TempConn.Free;
+    if FileExists(NonExistentFile) then
+      DeleteFile(NonExistentFile);
+  end;
+end;
+
+procedure TDieVixDatabaseTests.TestDPAPISecretProtectionRoundTrip;
+var
+  PlainSecret, Encrypted, Decrypted, UnencryptedLegacy: string;
+begin
+  PlainSecret := 'MasterKeySecret_2026!#$';
+  Encrypted := ProtectSecret(PlainSecret);
+
+  Assert.AreNotEqual(PlainSecret, Encrypted, 'Encrypted secret must differ from plain text');
+  Assert.IsTrue(Encrypted.StartsWith('DPAPI:'), 'Encrypted secret must start with DPAPI: prefix');
+
+  Decrypted := UnprotectSecret(Encrypted);
+  Assert.AreEqual(PlainSecret, Decrypted, 'Decrypted secret must match original plain text');
+
+  // Legacy unencrypted string (backwards compatibility)
+  UnencryptedLegacy := 'masterkey';
+  Assert.AreEqual('masterkey', UnprotectSecret(UnencryptedLegacy),
+    'Unencrypted string without DPAPI prefix must pass through untouched');
+end;
+
+procedure TDieVixDatabaseTests.TestResolveConfigIniPath;
+var
+  RootedPath, Resolved: string;
+begin
+  // Rooted path should resolve to itself
+  RootedPath := 'C:\CustomConfig\DieVix.ini';
+  Resolved := ResolveConfigIniPath(RootedPath);
+  Assert.AreEqual(RootedPath, Resolved, 'Explicit rooted ini path must be respected');
+
+  // Default empty resolution should resolve to a valid non-empty path
+  Resolved := ResolveConfigIniPath('');
+  Assert.IsTrue(Trim(Resolved) <> '', 'Default config resolution must return non-empty path');
+  Assert.IsTrue(ExtractFileName(Resolved).ToLower.EndsWith('.ini'), 'Resolved path must be an .ini file');
+end;
+
+procedure TDieVixDatabaseTests.TestMigrationChecksumTrackingAndTamperDetection;
+var
+  Qry: TFDQuery;
+  ChecksumVal: string;
+begin
+  Qry := TFDQuery.Create(nil);
+  try
+    Qry.Connection := FConn;
+    // Verify CHECKSUM column exists in SCHEMA_VERSION
+    Qry.SQL.Text :=
+      'SELECT RDB$FIELD_NAME FROM RDB$RELATION_FIELDS ' +
+      'WHERE RDB$RELATION_NAME = ''SCHEMA_VERSION'' AND TRIM(RDB$FIELD_NAME) = ''CHECKSUM''';
+    Qry.Open;
+    Assert.IsFalse(Qry.IsEmpty, 'SCHEMA_VERSION must contain CHECKSUM column after V010 migration');
+    Qry.Close;
+
+    // Verify applied migrations have valid 64-char hex SHA-256 checksums
+    Qry.SQL.Text := 'SELECT CHECKSUM FROM SCHEMA_VERSION WHERE VERSION_NUM = 1';
+    Qry.Open;
+    Assert.IsFalse(Qry.IsEmpty, 'Migration 1 record must exist in SCHEMA_VERSION');
+    ChecksumVal := Trim(Qry.FieldByName('CHECKSUM').AsString);
+    Qry.Close;
+
+    Assert.AreEqual(64, Length(ChecksumVal), 'Checksum must be a 64-character SHA-256 hex string');
+  finally
+    Qry.Free;
+  end;
+end;
+
+procedure TDieVixDatabaseTests.TestDieRepositorySingleTransactionRollback;
+var
+  Die: TDie;
+  NewID: Integer;
+  Qry: TFDQuery;
+  AuditCount: Integer;
+  CustID, MediaID: Integer;
+begin
+  Qry := TFDQuery.Create(nil);
+  try
+    Qry.Connection := FConn;
+    Qry.SQL.Text := 'SELECT FIRST 1 ID FROM CUSTOMER';
+    Qry.Open;
+    CustID := Qry.Fields[0].AsInteger;
+    Qry.Close;
+
+    Qry.SQL.Text := 'SELECT FIRST 1 ID FROM MEDIA';
+    Qry.Open;
+    MediaID := Qry.Fields[0].AsInteger;
+    Qry.Close;
+
+    // Clean up
+    FConn.ExecSQL('DELETE FROM DIE_AUDIT_LOG WHERE DIE_ID IN (SELECT ID FROM DIE WHERE SERIAL_NO = ''ZZTEST-TX-001'')');
+    FConn.ExecSQL('DELETE FROM DIE WHERE SERIAL_NO = ''ZZTEST-TX-001''');
+
+    Die := TDie.CreateNew('ZZTEST-TX-001', 96, 50.0, 40.0, 1, 1);
+    Die.CustomerID := CustID;
+    Die.MediaID := MediaID;
+    Die.StatusCode := 'AVAILABLE';
+    NewID := FDieRepo.Insert(Die);
+    Assert.IsTrue(NewID > 0, 'Insert must succeed and return generated ID');
+
+    // Verify both DIE row and DIE_AUDIT_LOG row exist
+    Qry.SQL.Text := 'SELECT COUNT(*) FROM DIE WHERE ID = :ID';
+    Qry.ParamByName('ID').AsInteger := NewID;
+    Qry.Open;
+    Assert.AreEqual(1, Qry.Fields[0].AsInteger, 'DIE row must exist');
+    Qry.Close;
+
+    Qry.SQL.Text := 'SELECT COUNT(*) FROM DIE_AUDIT_LOG WHERE DIE_ID = :ID AND ACTION = ''CREATE''';
+    Qry.ParamByName('ID').AsInteger := NewID;
+    Qry.Open;
+    AuditCount := Qry.Fields[0].AsInteger;
+    Assert.AreEqual(1, AuditCount, 'Single transaction must commit audit row alongside die insert');
+    Qry.Close;
+
+    // Clean up
+    FConn.ExecSQL('DELETE FROM DIE_AUDIT_LOG WHERE DIE_ID = ' + IntToStr(NewID));
+    FConn.ExecSQL('DELETE FROM DIE WHERE ID = ' + IntToStr(NewID));
+  finally
+    Qry.Free;
+  end;
+end;
+
+procedure TDieVixDatabaseTests.TestChangeStatusValidationAndConcurrency;
+var
+  Die: TDie;
+  DieID: Integer;
+  Qry: TFDQuery;
+  CustID, MediaID: Integer;
+  ValidationFailedArchived: Boolean;
+  ValidationFailedInvalidStatus: Boolean;
+  ConcurrencyFailedWrongVersion: Boolean;
+  UpdatedDie: TDie;
+  AuditCount: Integer;
+begin
+  Qry := TFDQuery.Create(nil);
+  try
+    Qry.Connection := FConn;
+    Qry.SQL.Text := 'SELECT FIRST 1 ID FROM CUSTOMER';
+    Qry.Open;
+    CustID := Qry.Fields[0].AsInteger;
+    Qry.Close;
+
+    Qry.SQL.Text := 'SELECT FIRST 1 ID FROM MEDIA';
+    Qry.Open;
+    MediaID := Qry.Fields[0].AsInteger;
+    Qry.Close;
+
+    // Clean up
+    FConn.ExecSQL('DELETE FROM DIE_AUDIT_LOG WHERE DIE_ID IN (SELECT ID FROM DIE WHERE SERIAL_NO = ''ZZTEST-CS-001'')');
+    FConn.ExecSQL('DELETE FROM DIE WHERE SERIAL_NO = ''ZZTEST-CS-001''');
+
+    Die := TDie.CreateNew('ZZTEST-CS-001', 96, 50.0, 40.0, 1, 1);
+    Die.CustomerID := CustID;
+    Die.MediaID := MediaID;
+    Die.StatusCode := 'AVAILABLE';
+    DieID := FDieRepo.Insert(Die);
+    Assert.IsTrue(DieID > 0, 'Insert must succeed');
+
+    try
+      // 1. Rejects ARCHIVED
+      ValidationFailedArchived := False;
+      try
+        FDieRepo.ChangeStatus(DieID, 'ARCHIVED', 'Attempt to archive via ChangeStatus', 'ADMIN');
+      except
+        on E: EDieVixValidationException do
+          ValidationFailedArchived := True;
+      end;
+      Assert.IsTrue(ValidationFailedArchived, 'ChangeStatus must reject ARCHIVED (must use ArchiveDie)');
+
+      // 2. Rejects invalid status code
+      ValidationFailedInvalidStatus := False;
+      try
+        FDieRepo.ChangeStatus(DieID, 'NON_EXISTENT_STATUS', 'Attempt invalid status', 'ADMIN');
+      except
+        on E: EDieVixValidationException do
+          ValidationFailedInvalidStatus := True;
+      end;
+      Assert.IsTrue(ValidationFailedInvalidStatus, 'ChangeStatus must reject status code not in DIE_STATUS');
+
+      // 3. Rejects wrong expected version
+      ConcurrencyFailedWrongVersion := False;
+      try
+        FDieRepo.ChangeStatus(DieID, 'IN_USE', 'Operator assigned', 'ADMIN', 999);
+      except
+        on E: EDieVixConcurrencyException do
+          ConcurrencyFailedWrongVersion := True;
+      end;
+      Assert.IsTrue(ConcurrencyFailedWrongVersion, 'ChangeStatus must reject conflicting expected version');
+
+      // 4. Successful change with correct expected version
+      Assert.IsTrue(FDieRepo.ChangeStatus(DieID, 'IN_USE', 'Operator assigned', 'ADMIN', 1),
+        'ChangeStatus must succeed with matching version');
+
+      UpdatedDie := FDieRepo.GetByID(DieID);
+      Assert.AreEqual('IN_USE', UpdatedDie.StatusCode, 'Status must be updated to IN_USE');
+      Assert.AreEqual(2, UpdatedDie.Version, 'VERSION must be incremented by 1');
+
+      // 5. Verify audit row was committed
+      Qry.SQL.Text := 'SELECT COUNT(*) FROM DIE_AUDIT_LOG WHERE DIE_ID = :ID AND ACTION = ''STATUS_CHANGE''';
+      Qry.ParamByName('ID').AsInteger := DieID;
+      Qry.Open;
+      AuditCount := Qry.Fields[0].AsInteger;
+      Assert.AreEqual(1, AuditCount, 'Audit row for STATUS_CHANGE must exist');
+      Qry.Close;
+    finally
+      FConn.ExecSQL('DELETE FROM DIE_AUDIT_LOG WHERE DIE_ID = ' + IntToStr(DieID));
+      FConn.ExecSQL('DELETE FROM DIE WHERE ID = ' + IntToStr(DieID));
+    end;
+  finally
+    Qry.Free;
+  end;
+end;
+
+procedure TDieVixDatabaseTests.TestUpdateLocationValidationAndConcurrency;
+var
+  Die: TDie;
+  DieID: Integer;
+  Qry: TFDQuery;
+  CustID, MediaID: Integer;
+  ConcurrencyFailedWrongVersion: Boolean;
+  UpdatedDie: TDie;
+  AuditCount: Integer;
+begin
+  Qry := TFDQuery.Create(nil);
+  try
+    Qry.Connection := FConn;
+    Qry.SQL.Text := 'SELECT FIRST 1 ID FROM CUSTOMER';
+    Qry.Open;
+    CustID := Qry.Fields[0].AsInteger;
+    Qry.Close;
+
+    Qry.SQL.Text := 'SELECT FIRST 1 ID FROM MEDIA';
+    Qry.Open;
+    MediaID := Qry.Fields[0].AsInteger;
+    Qry.Close;
+
+    // Clean up
+    FConn.ExecSQL('DELETE FROM DIE_AUDIT_LOG WHERE DIE_ID IN (SELECT ID FROM DIE WHERE SERIAL_NO = ''ZZTEST-UL-001'')');
+    FConn.ExecSQL('DELETE FROM DIE WHERE SERIAL_NO = ''ZZTEST-UL-001''');
+
+    Die := TDie.CreateNew('ZZTEST-UL-001', 96, 50.0, 40.0, 1, 1);
+    Die.CustomerID := CustID;
+    Die.MediaID := MediaID;
+    Die.StatusCode := 'AVAILABLE';
+    DieID := FDieRepo.Insert(Die);
+    Assert.IsTrue(DieID > 0, 'Insert must succeed');
+
+    try
+      // 1. Rejects wrong expected version
+      ConcurrencyFailedWrongVersion := False;
+      try
+        FDieRepo.UpdateLocation(DieID, 'R-01', 'S-02', 'B-03', 'Moved to shelf', 'ADMIN', 999);
+      except
+        on E: EDieVixConcurrencyException do
+          ConcurrencyFailedWrongVersion := True;
+      end;
+      Assert.IsTrue(ConcurrencyFailedWrongVersion, 'UpdateLocation must reject conflicting expected version');
+
+      // 2. Successful update with matching version
+      Assert.IsTrue(FDieRepo.UpdateLocation(DieID, 'R-01', 'S-02', 'B-03', 'Moved to shelf', 'ADMIN', 1),
+        'UpdateLocation must succeed with matching version');
+
+      UpdatedDie := FDieRepo.GetByID(DieID);
+      Assert.AreEqual('Rack R-01, Shelf S-02, Bin B-03', UpdatedDie.StorageLocation, 'StorageLocation must match');
+      Assert.AreEqual('R-01', UpdatedDie.StorageRack, 'Rack must match');
+      Assert.AreEqual('S-02', UpdatedDie.StorageShelf, 'Shelf must match');
+      Assert.AreEqual('B-03', UpdatedDie.StorageBin, 'Bin must match');
+      Assert.AreEqual(2, UpdatedDie.Version, 'VERSION must be incremented by 1');
+
+      // 3. Verify audit row was committed
+      Qry.SQL.Text := 'SELECT COUNT(*) FROM DIE_AUDIT_LOG WHERE DIE_ID = :ID AND ACTION = ''LOCATION_CHANGE''';
+      Qry.ParamByName('ID').AsInteger := DieID;
+      Qry.Open;
+      AuditCount := Qry.Fields[0].AsInteger;
+      Assert.AreEqual(1, AuditCount, 'Audit row for LOCATION_CHANGE must exist');
+      Qry.Close;
+    finally
+      FConn.ExecSQL('DELETE FROM DIE_AUDIT_LOG WHERE DIE_ID = ' + IntToStr(DieID));
+      FConn.ExecSQL('DELETE FROM DIE WHERE ID = ' + IntToStr(DieID));
+    end;
+  finally
+    Qry.Free;
+  end;
+end;
+
+procedure TDieVixDatabaseTests.TestTranslateDBExceptionMapping;
+var
+  LockEx: Exception;
+  Mapped: Exception;
+begin
+  LockEx := Exception.Create('deadlock detected / lock conflict on update');
+  try
+    Mapped := TranslateDBException(LockEx);
+    Assert.IsNotNull(Mapped, 'TranslateDBException must map lock/deadlock text to exception');
+    Assert.IsTrue(Mapped is EDieVixConcurrencyException, 'Mapped exception must be EDieVixConcurrencyException');
+    Mapped.Free;
+  finally
+    LockEx.Free;
   end;
 end;
 

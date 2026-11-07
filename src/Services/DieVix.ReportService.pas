@@ -609,10 +609,10 @@ begin
     if Trim(AFilter.StorageLocation) <> '' then
       Sql := Sql + ' AND (UPPER(D.STORAGE_LOCATION) LIKE :LOC) ';
     if AFilter.OnlySub3mm then
-      Sql := Sql + ' AND (D.AROUND_GAP_MM < 3.000) ';
+      Sql := Sql + ' AND (D.AROUND_GAP_UM < (SELECT COALESCE(CAST(SETTING_VALUE AS BIGINT), 3000) FROM APP_SETTING WHERE SETTING_KEY = ''MIN_AROUND_GAP_UM'')) ';
 
     if AFilter.ActiveOnly then
-      Sql := Sql + ' AND (D.STATUS_CODE IN (''ACTIVE'', ''AVAILABLE'', ''IN_USE'')) '
+      Sql := Sql + ' AND (D.STATUS_CODE IN (SELECT CODE FROM DIE_STATUS WHERE IS_USABLE = 1)) '
     else if Trim(AFilter.StatusCode) <> '' then
       Sql := Sql + ' AND (D.STATUS_CODE = :STATUS) '
     else if not AFilter.IncludeArchived then
@@ -686,10 +686,10 @@ begin
     if Trim(AFilter.StorageLocation) <> '' then
       Sql := Sql + ' AND (UPPER(D.STORAGE_LOCATION) LIKE :LOC) ';
     if AFilter.OnlySub3mm then
-      Sql := Sql + ' AND (D.AROUND_GAP_MM < 3.000) ';
+      Sql := Sql + ' AND (D.AROUND_GAP_UM < (SELECT COALESCE(CAST(SETTING_VALUE AS BIGINT), 3000) FROM APP_SETTING WHERE SETTING_KEY = ''MIN_AROUND_GAP_UM'')) ';
 
     if AFilter.ActiveOnly then
-      Sql := Sql + ' AND (D.STATUS_CODE IN (''ACTIVE'', ''AVAILABLE'', ''IN_USE'')) '
+      Sql := Sql + ' AND (D.STATUS_CODE IN (SELECT CODE FROM DIE_STATUS WHERE IS_USABLE = 1)) '
     else if Trim(AFilter.StatusCode) <> '' then
       Sql := Sql + ' AND (D.STATUS_CODE = :STATUS) '
     else if not AFilter.IncludeArchived then
@@ -763,10 +763,10 @@ begin
     if Trim(AFilter.StorageLocation) <> '' then
       Sql := Sql + ' AND (UPPER(D.STORAGE_LOCATION) LIKE :LOC) ';
     if AFilter.OnlySub3mm then
-      Sql := Sql + ' AND (D.AROUND_GAP_MM < 3.000) ';
+      Sql := Sql + ' AND (D.AROUND_GAP_UM < (SELECT COALESCE(CAST(SETTING_VALUE AS BIGINT), 3000) FROM APP_SETTING WHERE SETTING_KEY = ''MIN_AROUND_GAP_UM'')) ';
 
     if AFilter.ActiveOnly then
-      Sql := Sql + ' AND (D.STATUS_CODE IN (''ACTIVE'', ''AVAILABLE'', ''IN_USE'')) '
+      Sql := Sql + ' AND (D.STATUS_CODE IN (SELECT CODE FROM DIE_STATUS WHERE IS_USABLE = 1)) '
     else if Trim(AFilter.StatusCode) <> '' then
       Sql := Sql + ' AND (D.STATUS_CODE = :STATUS) '
     else if not AFilter.IncludeArchived then
@@ -1144,7 +1144,7 @@ begin
   end;
 
   if AFilter.ActiveOnly then
-    Sql := Sql + ' AND (F.STATUS_CODE IN (''ACTIVE'', ''AVAILABLE'', ''IN_USE'')) '
+    Sql := Sql + ' AND (F.STATUS_CODE IN (SELECT CODE FROM DIE_STATUS WHERE IS_USABLE = 1)) '
   else if Trim(AFilter.StatusCode) <> '' then
     Sql := Sql + ' AND (F.STATUS_CODE = :STATUS) '
   else if not AFilter.IncludeArchived then

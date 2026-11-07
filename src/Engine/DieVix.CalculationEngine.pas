@@ -544,7 +544,7 @@ begin
     CandidateRepeatUm := TeethToRepeatUm(Teeth, APitchUm);
     if CandidateRepeatUm >= RequiredRepeatUm then
     begin
-      GapRes := CalculateAroundGapFromMm(Teeth, ALabelAroundMm, AUps, AMinGapMm, AHardBlockGapMm, APitchUm);
+      GapRes := CalculateAroundGapFromMm(Teeth, ALabelAroundMm, AUps, AMinGapMm, AHardBlockGapMm, APitchUm, AAllowedFleet);
       if GapRes.Status in [gsStandardApproved, gsOptimal] then
       begin
         BestTeeth := Teeth;
@@ -572,7 +572,7 @@ begin
   begin
     // Fallback: Check if the largest available cylinder can at least fit with a warning
     Teeth := TeethList[High(TeethList)];
-    GapRes := CalculateAroundGapFromMm(Teeth, ALabelAroundMm, AUps, AMinGapMm, AHardBlockGapMm, APitchUm);
+    GapRes := CalculateAroundGapFromMm(Teeth, ALabelAroundMm, AUps, AMinGapMm, AHardBlockGapMm, APitchUm, AAllowedFleet);
     Result.Teeth := Teeth;
     Result.RepeatMm := GapRes.CylinderRepeatMm;
     Result.RepeatInch := GapRes.CylinderRepeatInch;

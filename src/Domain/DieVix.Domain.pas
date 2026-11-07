@@ -131,6 +131,8 @@ type
     BadgeColor: string;
     OverrideReason: string;
     GapPolicyStatus: string;
+    AroundGapUm: Int64;
+    GapStatus: string;
     PurchaseDate: TDateTime;
     ReceivedDate: TDateTime;
     DieMaker: string;
@@ -522,8 +524,8 @@ type
     function CanPermanentlyDelete(const AID: Integer; out ARefusalReason: string): Boolean;
     function PermanentlyDelete(const AID: Integer): Boolean;
     function SerialExists(const ASerialNo: string; const AExcludeID: Integer = 0): Boolean;
-    function ChangeStatus(const AID: Integer; const ANewStatusCode, AReason, AUser: string): Boolean;
-    function UpdateLocation(const AID: Integer; const ARack, AShelf, ABin, ANotes, AUser: string): Boolean;
+    function ChangeStatus(const AID: Integer; const ANewStatusCode, AReason, AUser: string; const AExpectedVersion: Integer = 0): Boolean;
+    function UpdateLocation(const AID: Integer; const ARack, AShelf, ABin, ANotes, AUser: string; const AExpectedVersion: Integer = 0): Boolean;
     function FindSimilarDies(
       const ATeeth: Integer;
       const AAroundSizeMm, AAcrossSizeMm: Double;
@@ -680,9 +682,17 @@ begin
   Result.RepeatMm := TeethToRepeatMm(ATeeth, STANDARD_PITCH_UM);
   Result.RepeatInch := TeethToRepeatInch(ATeeth);
   if AAroundUps > 0 then
-    Result.AroundGapMm := (Result.RepeatMm - (AAroundUps * AAroundMm)) / AAroundUps
+  begin
+    Result.AroundGapMm := (Result.RepeatMm - (AAroundUps * AAroundMm)) / AAroundUps;
+    Result.AroundGapUm := MmToUm(Result.AroundGapMm);
+  end
   else
+  begin
     Result.AroundGapMm := 0.0;
+    Result.AroundGapUm := 0;
+  end;
+  Result.GapStatus := 'APPROVED';
+  Result.GapPolicyStatus := 'APPROVED';
 end;
 
 { TDieAuditEntry }

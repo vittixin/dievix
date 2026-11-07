@@ -16,7 +16,7 @@ uses
   frmCylinderMaster, frmMachineMaster, frmMachineCylinderMatrix,
   frmCustomerMaster, frmMediaMaster, frmDieStatusMaster, frmSettings,
   DieVix.DieService, frmDieRegister, frmKeylineCalculator, frmBackup,
-  DieVix.FlatbedDieService, frmFlatbedDieRegister;
+  DieVix.FlatbedDieService, frmFlatbedDieRegister, DieVix.BackupService;
 
 type
   TfrmMain = class(TForm)
@@ -94,22 +94,133 @@ implementation
 
 procedure TfrmMain.FormCreate(Sender: TObject);
 var
+  ConnErr: string;
   MigDir: string;
   AppCount: Integer;
   LogStr: string;
+  CurrentDbVer: Integer;
+  HighestMigVer: Integer;
+  BackupSvc: TDieVixBackupService;
+  BackupRes: TBackupResult;
 begin
   if not TDieVixConnectionManager.IsWaitCursorRegistered then
     raise Exception.Create('FireDAC UI wait cursor factory is not registered.');
 
-  // Auto-apply migrations if migrations directory is discovered
+  // 1. Verify database connection (OpenMode=Open; wrong path or bad config produces a clear dialog)
+  if not TDieVixConnectionManager.Instance.TestConnection(ConnErr) then
+  begin
+    MessageDlg(
+      'Unable to connect to Firebird database:'#13#10 + ConnErr + #13#10#13#10 +
+      'Please verify the database path and credentials in DieVix.ini and ensure the database file exists.',
+      mtError, [mbOK], 0
+    );
+    Application.Terminate;
+    Exit;
+  end;
+
+  // 2. Discover migrations directory
   MigDir := TPath.Combine(ExtractFilePath(ParamStr(0)), 'migrations');
   if not DirectoryExists(MigDir) then
     MigDir := TPath.Combine(ExtractFilePath(ParamStr(0)), '..\migrations');
   if not DirectoryExists(MigDir) and DirectoryExists('migrations') then
     MigDir := TPath.GetFullPath('migrations');
 
+  // 3. Check schema version against available migrations
   if DirectoryExists(MigDir) then
-    TDieVixConnectionManager.Instance.ApplyMigrations(MigDir, AppCount, LogStr);
+  begin
+    CurrentDbVer := TDieVixConnectionManager.Instance.GetDatabaseSchemaVersion;
+    HighestMigVer := TDieVixConnectionManager.Instance.GetHighestAvailableMigrationVersion(MigDir);
+
+    if (HighestMigVer > 0) and (CurrentDbVer > HighestMigVer) then
+    begin
+      // Database schema is newer than application supports
+      MessageDlg(
+        Format(
+          'Database schema version (%d) is newer than the highest migration supported by this application (%d).'#13#10#13#10 +
+          'DieVix cannot start with a newer schema. Please upgrade your application.',
+          [CurrentDbVer, HighestMigVer]
+        ),
+        mtError, [mbOK], 0
+      );
+      Application.Terminate;
+      Exit;
+    end
+    else if CurrentDbVer < HighestMigVer then
+    begin
+      // Schema is behind; offer confirmed upgrade with prior backup
+      if MessageDlg(
+        Format(
+          'The database schema (version %d) is behind available application migrations (version %d).'#13#10#13#10 +
+          'Would you like to upgrade the database schema now?'#13#10 +
+          'An automatic database backup will be created before applying migrations.',
+          [CurrentDbVer, HighestMigVer]
+        ),
+        mtConfirmation, [mbYes, mbNo], 0
+      ) = mrYes then
+      begin
+        // Pre-migration backup
+        BackupSvc := TDieVixBackupService.Create;
+        try
+          BackupRes := BackupSvc.BackupDatabase;
+          if not BackupRes.Success then
+          begin
+            MessageDlg(
+              'Database upgrade aborted: automatic pre-migration backup failed.'#13#10#13#10 +
+              BackupRes.ErrorMessage,
+              mtError, [mbOK], 0
+            );
+            Application.Terminate;
+            Exit;
+          end;
+        finally
+          BackupSvc.Free;
+        end;
+
+        // Apply migrations
+        if not TDieVixConnectionManager.Instance.ApplyMigrations(MigDir, AppCount, LogStr) then
+        begin
+          MessageDlg(
+            'Failed to apply database migrations.'#13#10#13#10 +
+            'Migration Log:'#13#10 + LogStr,
+            mtError, [mbOK], 0
+          );
+          Application.Terminate;
+          Exit;
+        end
+        else
+        begin
+          MessageDlg(
+            Format('Database schema successfully upgraded to version %d (%d migration(s) applied).',
+              [HighestMigVer, AppCount]),
+            mtInformation, [mbOK], 0
+          );
+        end;
+      end
+      else
+      begin
+        MessageDlg(
+          'DieVix cannot continue with an outdated database schema. The application will close.',
+          mtWarning, [mbOK], 0
+        );
+        Application.Terminate;
+        Exit;
+      end;
+    end
+    else
+    begin
+      // Schema is up to date; run ApplyMigrations to verify checksums on applied migrations
+      if not TDieVixConnectionManager.Instance.ApplyMigrations(MigDir, AppCount, LogStr) then
+      begin
+        MessageDlg(
+          'Database migration checksum verification failed.'#13#10#13#10 +
+          LogStr,
+          mtError, [mbOK], 0
+        );
+        Application.Terminate;
+        Exit;
+      end;
+    end;
+  end;
 
   FService := TMasterDataService.Create;
   FDieService := TDieService.Create;
